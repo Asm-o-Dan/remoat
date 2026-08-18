@@ -8,6 +8,16 @@ export interface SessionListItem {
     isActive: boolean;
 }
 
+/** Sidebar session item with cascade ID */
+export interface SidebarSessionItem {
+    id: string;
+    title: string;
+    isSelected: boolean;
+    href?: string;
+    x?: number;
+    y?: number;
+}
+
 /** Chat session information */
 export interface ChatSessionInfo {
     /** Current chat title (if available) */
@@ -18,13 +28,51 @@ export interface ChatSessionInfo {
 
 /** Script to get the state of the new chat button */
 const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
-    const btn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSection = urlParams.get('section');
+    
+    let btn = null;
+    let isProjectBtn = false;
+    
+    // Priority 1: If inside a project (section present), look for project-specific "New Conversation in Project" button
+    if (currentSection) {
+        btn = document.querySelector('a[aria-label*="New Conversation in Project"][href*="' + currentSection + '"]') ||
+              document.querySelector('button[aria-label*="New Conversation in Project"][href*="' + currentSection + '"]');
+        if (btn) isProjectBtn = true;
+    }
+    
+    // Priority 2: Any visible "New Conversation in Project" button if inside a project view
+    if (!btn) {
+        btn = document.querySelector('[aria-label="New Conversation in Project"]') ||
+              document.querySelector('[aria-label*="New Conversation in Project"]');
+        if (btn) isProjectBtn = true;
+    }
+    
+    // Priority 3: Standard New Conversation / New Chat buttons
+    if (!btn) {
+        btn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]') ||
+            document.querySelector('[aria-label="New Conversation"]') ||
+            document.querySelector('[aria-label="New Chat"]') ||
+            document.querySelector('[aria-label*="New conversation"]') ||
+            document.querySelector('[aria-label*="New Chat"]') ||
+            document.querySelector('button[title*="New Conversation"]') ||
+            document.querySelector('button[title*="New Chat"]') ||
+            Array.from(document.querySelectorAll('button')).find(b => (b.textContent && b.textContent.includes('New Chat')) || (b.getAttribute('aria-label') && b.getAttribute('aria-label').includes('New')));
+    }
+    
     if (!btn) return { found: false };
     const cursor = window.getComputedStyle(btn).cursor;
     const rect = btn.getBoundingClientRect();
+    
+    // Programmatic click attempt as immediate trigger
+    try {
+        (btn as HTMLElement).click();
+    } catch {}
+    
     return {
         found: true,
-        enabled: cursor === 'pointer',
+        isProjectBtn,
+        enabled: cursor === 'pointer' || !(btn as any).disabled || isProjectBtn || btn.tagName === 'A',
         cursor,
         x: Math.round(rect.x + rect.width / 2),
         y: Math.round(rect.y + rect.height / 2),
@@ -843,5 +891,132 @@ export class ChatSessionService {
             } catch (_) { /* try next context */ }
         }
         return { found: false, enabled: false, x: 0, y: 0 };
+    }
+
+    /**
+     * Get list of all chat sessions directly from the Antigravity sidebar.
+     */
+    async getSidebarSessions(cdpService: CdpService): Promise<SidebarSessionItem[]> {
+        const expression = `(() => {
+            const rows = Array.from(document.querySelectorAll('[data-testid="conversation-row-sidebar"]'));
+            return rows.map(r => {
+                const cascadeId = r.getAttribute('data-cascade-id') || '';
+                const isSelected = r.getAttribute('data-selected') === 'true';
+                const link = r.querySelector('a');
+                const href = link ? link.getAttribute('href') : ('/c/' + cascadeId);
+                
+                let text = (r.textContent || '').trim();
+                text = text.replace(/\\d+[smhdwy]$/i, '').replace(/\\d+\\s*(min|hr|hour|day|week|month|year)s?\\s*ago$/i, '').trim();
+                if (!text && cascadeId) text = 'Chat ' + cascadeId.slice(0, 8);
+                
+                const rect = r.getBoundingClientRect();
+                return {
+                    id: cascadeId,
+                    title: text || 'Untitled Chat',
+                    isSelected,
+                    href: href || undefined,
+                    x: Math.round(rect.x + rect.width / 2),
+                    y: Math.round(rect.y + rect.height / 2)
+                };
+            }).filter(s => s.id || s.title);
+        })()`;
+        try {
+            const contextId = cdpService.getPrimaryContextId();
+            const res = await cdpService.call('Runtime.evaluate', {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+                contextId: contextId || undefined,
+            });
+            return res?.result?.value || [];
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * Activate a chat session by ID or Title.
+     */
+    async activateSessionByIdOrTitle(
+        cdpService: CdpService,
+        sessionId?: string,
+        sessionTitle?: string
+    ): Promise<{ ok: boolean; error?: string }> {
+        const safeId = JSON.stringify(sessionId || '');
+        const safeTitle = JSON.stringify(sessionTitle || '');
+        const expression = `(async () => {
+            const targetId = ${safeId};
+            const targetTitle = ${safeTitle};
+            
+            // Strategy 1: Find row by data-cascade-id
+            let targetEl = null;
+            if (targetId) {
+                targetEl = document.querySelector('[data-cascade-id="' + targetId + '"]');
+            }
+            
+            // Strategy 2: Find row by link href containing targetId
+            if (!targetEl && targetId) {
+                targetEl = document.querySelector('a[href*="' + targetId + '"]');
+            }
+            
+            // Strategy 3: Find by title text matching
+            if (!targetEl && targetTitle) {
+                const normalize = (s) => (s || '').toLowerCase().replace(/[^a-z0-9а-яё]/gi, '');
+                const targetNorm = normalize(targetTitle);
+                const rows = Array.from(document.querySelectorAll('[data-testid="conversation-row-sidebar"]'));
+                targetEl = rows.find(r => {
+                    const t = normalize(r.textContent || '');
+                    return t && (t === targetNorm || t.includes(targetNorm) || targetNorm.includes(t));
+                });
+            }
+            
+            if (!targetEl) {
+                return { ok: false, error: 'Chat session not found in sidebar.' };
+            }
+            
+            // Click the element (or its link)
+            const link = targetEl.querySelector('a') || targetEl;
+            const rect = link.getBoundingClientRect();
+            const x = Math.round(rect.x + rect.width / 2);
+            const y = Math.round(rect.y + rect.height / 2);
+            
+            ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
+                link.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
+            });
+            
+            try {
+                link.click();
+            } catch {}
+            
+            return { ok: true, x, y };
+        })()`;
+        try {
+            const contextId = cdpService.getPrimaryContextId();
+            const res = await cdpService.call('Runtime.evaluate', {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+                contextId: contextId || undefined,
+            });
+            const value = res?.result?.value;
+            if (value?.ok) {
+                if (value.x && value.y) {
+                    await cdpService.call('Input.dispatchMouseEvent', {
+                        type: 'mouseMoved', x: value.x, y: value.y,
+                    });
+                    await cdpService.call('Input.dispatchMouseEvent', {
+                        type: 'mousePressed', x: value.x, y: value.y, button: 'left', clickCount: 1,
+                    });
+                    await cdpService.call('Input.dispatchMouseEvent', {
+                        type: 'mouseReleased', x: value.x, y: value.y, button: 'left', clickCount: 1,
+                    });
+                }
+                await new Promise(r => setTimeout(r, 600));
+                return { ok: true };
+            }
+            return { ok: false, error: value?.error || 'Failed to activate session.' };
+        } catch (e: any) {
+            return { ok: false, error: e?.message || String(e) };
+        }
     }
 }

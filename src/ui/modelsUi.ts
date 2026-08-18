@@ -29,7 +29,7 @@ export async function buildModelsUI(
         const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '');
         const nName = normalize(mName);
         const q = quotaData.find(q => {
-            const nLabel = normalize(q.label);
+            const nLabel = normalize(q.label || '');
             const nModel = normalize(q.model || '');
             return nLabel === nName || nModel === nName
                 || nName.includes(nLabel) || nLabel.includes(nName)
@@ -73,7 +73,7 @@ export async function buildModelsUI(
         const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '');
         const nName = normalize(mName);
         const q = quotaData.find(q => {
-            const nLabel = normalize(q.label);
+            const nLabel = normalize(q.label || '');
             const nModel = normalize(q.model || '');
             return nLabel === nName || nModel === nName
                 || nName.includes(nLabel) || nLabel.includes(nName)

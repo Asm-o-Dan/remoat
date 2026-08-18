@@ -1,364 +1,156 @@
 <p align="center" style="margin-bottom:0">
   <img src="docs/images/owl-logo.svg" alt="Remoat owl" width="240" />
 </p>
-<h1 align="center" style="margin-top:0">Remoat</h1>
+<h1 align="center" style="margin-top:0">Remoat — Mobile-First Antigravity Controller</h1>
 
 <p align="center">
-  <strong>Control your AI coding assistant from anywhere — right from Telegram.</strong>
+  <strong>Control Antigravity IDE from anywhere — right from your phone via Telegram.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/optimistengineer/Remoat/blob/main/LICENSE"><img src="https://img.shields.io/github/license/optimistengineer/Remoat?style=flat-square" alt="License" /></a>
+  <a href="https://github.com/Asm-o-Dan/remoat/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Asm-o-Dan/remoat?style=flat-square" alt="License" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?style=flat-square&logo=node.js" alt="Node.js" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square" alt="Platform" />
+  <img src="https://img.shields.io/badge/UX-Mobile--First-blueviolet?style=flat-square" alt="Mobile-First UX" />
+  <img src="https://img.shields.io/badge/security-hardened-success?style=flat-square" alt="Security Hardened" />
 </p>
 
 ---
 
-Remoat is a **local Telegram bot** that lets you remotely operate [Antigravity](https://antigravity.dev) IDE on your PC — from your phone, tablet, or any device with Telegram.
+## 🌟 What is Remoat?
 
-Type a natural-language instruction, attach a screenshot, or send a voice note. Remoat dispatches it to Antigravity via Chrome DevTools Protocol, monitors progress in real time, and streams results back to Telegram. Everything runs on your machine.
+**Remoat** is a local Telegram bot bridge for [Antigravity](https://antigravity.dev) IDE. It enables full remote operation of your home/office development environment directly from your smartphone, tablet, or secondary machine with frictionless **Mobile-First UX** and **Chrome DevTools Protocol (CDP)** integration.
 
-## Table of Contents
+Everything executes **100% locally** on your machine — no third-party cloud relay, no telemetry leaks, and zero vendor lock-in.
 
-- [Quick Start](#quick-start)
-- [Features](#features)
-- [Advanced Setup](#advanced-setup)
-- [Commands](#commands)
-- [Troubleshooting](#troubleshooting)
-- [How It Works](#how-it-works)
-- [Project Structure](#project-structure)
-- [Contributing](#contributing)
-- [License](#license)
+---
 
-## Quick Start
+## 🚀 Key Features & Enhancements
 
-### Prerequisites
+### 📱 1. Mobile-First Workspace & Session Management
+- **Interactive Chat Switcher (`/chats` & `/sessions`)**: Paginated list of active conversations with 1-click switching inline buttons.
+- **Fast Chat Creator (`/new`)**: Start a new chat within the current bound project instantly.
+- **Chat Summarizer (`/summary`, `/recap`, `/brief`)**: Generate immediate status briefings and milestone recaps on the go.
+- **Agent Skills Catalog (`/skills`, `/skill`)**: Interactive catalog of specialized subagent workflows (`Debug Detective`, `Multi-Critic Review`, `Diagram Architect`, `Project Planner`, `Iterative Dev Loop`, etc.) with one-click triggers.
+- **Dynamic Window Switcher (`/workspaces`)**: Jump between multiple open Antigravity IDE windows on the fly.
 
-- [Node.js](https://nodejs.org/) 18 or higher
-- [Antigravity](https://antigravity.dev) installed on your machine
-- A [Telegram](https://telegram.org/) account
+### 🛡️ 2. Security Hardening (P0 / P1 Multi-Critic Certified)
+- **Safe File Downloads**: Automatic detection of generated files with smart inline `[📁 download]` buttons, backed by strict file system path validation to prevent unauthorized/arbitrary file exfiltration.
+- **Workspace Session Isolation**: Complete prevention of Cross-Workspace Hijacking when switching between multiple concurrent repositories.
+- **Memory & Callback Safety**: LRU caching for callback IDs prevents Telegram API 64-byte payload truncation crashes and eliminates memory leaks.
 
-<details>
-<summary>macOS: you'll also need Xcode Command Line Tools</summary>
+### ⚡ 3. Clean Output & Performance Optimization
+- **Zero Artifact Noise**: Filters out raw internal metadata, `task.md` scratchpads, and execution logs from cluttering mobile chats.
+- **Optimized CDP DOM Polling**: High-performance debouncing prevents Chromium freezes and CPU spikes.
+- **Pre-formatted Code & Tables**: Formats markdown tables into readable ASCII blocks and preserves syntax-highlighted code blocks seamlessly in Telegram HTML mode.
+- **🇷🇺 Russian & English Localization**: Native Telegram command menu registration in Russian (`ru`) and English with clear emoji markers.
 
-Remoat uses `better-sqlite3`, a native C++ module that requires a compiler. If you don't have Xcode CLI tools installed, run:
+---
 
-```bash
-xcode-select --install
-```
-
-You can verify they're installed with `xcode-select -p`.
-
-</details>
-
-### 1. Install Remoat
-
-```bash
-npm install -g remoat
-```
-
-Or with Homebrew (macOS/Linux):
-
-```bash
-brew tap optimistengineer/remoat
-brew install remoat
-```
-
-### 2. Run the setup wizard
-
-```bash
-remoat setup
-```
-
-The wizard walks you through:
-
-- **Telegram Bot Token** — Create a bot via [@BotFather](https://t.me/BotFather) on Telegram (`/newbot`), then copy the token it gives you
-- **Allowed User IDs** — Only these Telegram users can control the bot. Message [@userinfobot](https://t.me/userinfobot) to get your ID
-- **Workspace Directory** — The parent directory where your coding projects live (e.g. `~/Code`)
-
-### 3. Launch Antigravity with CDP enabled
-
-```bash
-remoat open
-```
-
-> [!NOTE]
-> If Antigravity is already running, quit it first and relaunch with `remoat open` — it needs the CDP debug port to be enabled.
-
-### 4. Start the Telegram bot (in a new terminal)
-
-```bash
-remoat start
-```
-
-That's it. Open Telegram, find your bot, and start sending instructions.
-
-<details>
-<summary>Voice messages (optional): install the Whisper model</summary>
-
-```bash
-npx nodejs-whisper download
-```
-
-This pulls `base.en` (~140 MB). Requires `cmake` (`brew install cmake` on macOS, `apt install cmake` on Linux).
-
-</details>
-
-> Having issues? Run `remoat doctor` to diagnose your setup.
-
-## Features
-
-**Remote control from anywhere** — Send natural-language prompts, images, or voice notes from your phone. Antigravity executes them on your PC with full local resources.
-
-**Project isolation via Telegram Topics** — Each project maps to a Telegram Forum Topic. All messages within a topic automatically use the correct project directory and session history — no manual context switching needed.
-
-**Real-time progress streaming** — Long-running tasks report progress in phases (sending, thinking, complete) with a live process log and elapsed timer, streamed as Telegram messages.
-
-**Voice input** — Hold the mic button and speak. Remoat transcribes locally via [whisper.cpp](https://github.com/ggerganov/whisper.cpp) — no cloud APIs, no Telegram Premium required.
-
-**Approval routing** — When Antigravity asks for confirmation (file edits, plan decisions), the dialog surfaces in Telegram with inline action buttons. Or toggle `/autoaccept` to approve automatically.
-
-**Security by design** — Whitelist-based access control. Path traversal prevention. Credentials stored locally. No webhooks, no port exposure.
-
-## Advanced Setup
-
-### From source
-
-```bash
-git clone https://github.com/optimistengineer/Remoat.git
-cd Remoat
-npm install
-cp .env.example .env
-```
-
-Edit `.env` with your values:
-
-```env
-TELEGRAM_BOT_TOKEN=your_bot_token_here
-ALLOWED_USER_IDS=123456789
-WORKSPACE_BASE_DIR=~/Code
-USE_TOPICS=true
-```
-
-> [!TIP]
-> Alternatively, run `npm start -- setup` to use the interactive wizard instead of editing `.env` manually.
-
-Then start the bot:
-
-```bash
-npm run dev       # development mode with auto-reload
-# or
-npm start         # run from source
-```
-
-### Launching Antigravity with CDP
-
-Remoat connects to Antigravity via Chrome DevTools Protocol. Launch Antigravity with a debug port enabled:
-
-```bash
-remoat open       # auto-selects an available port (9222, 9223, 9333, 9444, 9555, or 9666)
-```
-
-From source, you can also use the bundled launcher scripts:
-
-| Platform | Method |
-|----------|--------|
-| macOS    | Double-click `start_antigravity_mac.command` (run `chmod +x` first time) — probes `Antigravity IDE.app` then `Antigravity.app` |
-| Windows  | Double-click `start_antigravity_win.bat` — probes `Antigravity IDE` then `Antigravity`, falls back to `PATH` |
-| Linux    | `remoat open` (probes `/usr/bin`, `/usr/local/bin`, `/opt`, `/snap`); set `ANTIGRAVITY_PATH=/path/to/antigravity` in `.env` for anything else |
-
-> Launch Antigravity first, then start the bot. It connects automatically.
-
-#### Antigravity v1 vs v2
-
-Antigravity IDE v2 renamed the Windows install folder and executable (note the **space**). Remoat
-supports both: it probes the v2 location first, then the v1 location, and uses the first one that
-actually exists — so a v1 install keeps working unchanged.
-
-| Platform | Probed, in order |
-|----------|------------------|
-| macOS    | `/Applications/Antigravity IDE.app`, `/Applications/Antigravity.app`, then the same two under `~/Applications` |
-| Windows  | `%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe`, `%LOCALAPPDATA%\Programs\Antigravity\Antigravity.exe`, the same two under `%ProgramFiles%` and `%ProgramFiles(x86)%`, then the `bin\antigravity.cmd` shims |
-| Linux    | `/usr/bin/antigravity`, `/usr/bin/antigravity-ide`, `/usr/local/bin/...`, `/opt/Antigravity/antigravity`, `/opt/Antigravity IDE/antigravity-ide`, `/snap/bin/antigravity` |
-
-`ANTIGRAVITY_PATH` always wins over all of the above. On macOS v2 (verified on 2.0.10) the `.app`
-bundle is still named `Antigravity.app` — the rename is Windows-only.
-
-Run `remoat doctor` to see exactly which path was resolved, and the full probed list if none was.
-
-### Forum Topics (optional)
-
-For multi-project workflows, Remoat supports Telegram Forum Topics — each project gets its own topic thread.
-
-1. Create a Telegram supergroup and enable **Topics** in group settings
-2. Add your bot to the group with admin permissions
-3. Set `USE_TOPICS=true` in `.env` (this is the default)
-
-For simpler setups, set `USE_TOPICS=false` and use the bot in a regular chat.
-
-## Commands
-
-### CLI
-
-```
-remoat              auto-detect: runs setup if unconfigured, otherwise starts the bot
-remoat setup        interactive setup wizard
-remoat open         launch Antigravity with CDP port enabled
-remoat start        start the Telegram bot
-remoat doctor       diagnose configuration and connectivity issues
-remoat --verbose    show debug-level logs (CDP traffic, detector events)
-remoat --quiet      errors only
-```
-
-### Telegram
+## 📋 Commands Quick Reference
 
 | Command | Description |
-|---------|-------------|
-| `/project` | Browse and select a project (inline keyboard) |
-| `/new` | Start a new chat session in the current project |
-| `/chat` | Show current session info and list all sessions |
-| | |
-| `/model [name]` | Switch the LLM model (e.g. `gemini-2.5-pro`, `claude-opus-4-6`) |
-| `/mode` | Switch execution mode (`fast`, `plan`) |
-| `/stop` | Force-stop a running Antigravity task |
-| | |
-| `/template` | List registered prompt templates with execute buttons |
-| `/template_add <name> <prompt>` | Register a new prompt template |
-| `/template_delete <name>` | Delete a template |
-| | |
-| `/screenshot` | Capture and send Antigravity's current screen |
-| `/status` | Show connection status, active project, and current mode |
-| `/autoaccept` | Toggle auto-approval of file edit dialogs |
-| `/cleanup [days]` | Clean up inactive session topics (default: 7 days) |
-| `/help` | Show available commands |
+| :--- | :--- |
+| `/chats`, `/sessions` | 💬 List project chats with 5-per-page interactive pagination |
+| `/new` | ➕ Create and switch to a new chat in the current project |
+| `/skills` | 🚀 Interactive catalog of agent skills and tools |
+| `/summary` | 📋 Quick status report and summary of the current session |
+| `/quota` | 📊 Real-time LLM quotas, model limits, and reset timers |
+| `/models` | 🧠 Switch active model (Gemini 3.7 Pro, Flash, Claude, etc.) |
+| `/workspaces` | 🪟 Switch active IDE window |
+| `/project` | 📁 Select or switch active project directory |
+| `/mode` | ⚙️ Switch execution mode (Fast / Planning / Coding) |
+| `/screenshot` | 📸 Capture a real-time screenshot of the IDE window |
+| `/stop` | 🛑 Safely interrupt active AI generation |
+| `/autoaccept` | ⚡ Toggle auto-approval mode for tool execution |
+| `/chat` | ℹ️ Detailed information about the current chat session |
+| `/status` | 🔍 Diagnostic overview of bot connections and workspaces |
+| `/ping` | 🏓 Check round-trip latency |
+| `/help` | ❓ Complete documentation and help guide |
 
-### Natural Language
+---
 
-Just type in any bound topic or direct chat:
+## 🛠️ Quick Start
 
-> _refactor the auth components — see the attached screenshot for the target layout_
+### 1. Prerequisites
+- [Node.js](https://nodejs.org/) 18+
+- [Antigravity](https://antigravity.dev) installed
+- A Telegram account
 
-Or hold the mic button and speak — the voice note gets transcribed locally and sent as a prompt.
-
-## Troubleshooting
-
-Run diagnostics first:
-
+### 2. Installation
 ```bash
-remoat doctor
-```
-
-This checks your config, Node.js version, Xcode tools (macOS), Antigravity installation, and CDP port connectivity.
-
-**`npm install` fails with `gyp ERR!` on macOS** — Install Xcode Command Line Tools: `xcode-select --install`
-
-**`remoat open` can't find Antigravity** — Standard install locations are probed automatically (see
-[Antigravity v1 vs v2](#antigravity-v1-vs-v2)); nothing has to live in `/Applications`. Run
-`remoat doctor` to see which path resolved and the full probed list. If your install is somewhere
-else, set `ANTIGRAVITY_PATH` in your `.env` file or environment:
-
-```bash
-# macOS — normally NOT needed, see the note below
-export ANTIGRAVITY_PATH="/Applications/Antigravity.app/Contents/MacOS/Antigravity"
-# Windows (cmd)
-set ANTIGRAVITY_PATH=C:\Users\you\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe
-# Linux
-export ANTIGRAVITY_PATH=/opt/applications/antigravity.AppImage
-
-remoat open
-```
-
-> **macOS users: leave `ANTIGRAVITY_PATH` unset.** `remoat open` launches the app with `open -a`,
-> which locates the bundle through LaunchServices no matter where it lives, and the `Antigravity IDE`
-> rename is **Windows-only** — the macOS bundle is still `Antigravity.app` with a
-> `Contents/MacOS/Antigravity` binary. Setting `ANTIGRAVITY_PATH` switches `remoat open` to a
-> direct-binary launch, so a wrong value turns a working setup into `Failed to open …`.
-
-> **Paths with spaces**: quote the value when you export it in a shell, but do **not** quote it inside
-> `.env` — dotenv reads the value literally, and the surrounding quotes would become part of the path.
-> Correct `.env` line:
-> `ANTIGRAVITY_PATH=C:\Users\you\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe`
-
-**`Chat input field not found` when sending a message** — This was the Antigravity IDE v2 symptom
-fixed in [#15](https://github.com/optimistengineer/remoat/issues/15) (the composer's ARIA role changed
-from `textbox` to `combobox`). If it reappears after an Antigravity update, run the bot with
-`LOG_LEVEL=debug` and include the `Chat input matched tier …` / `Chat input not found after …` line in
-your report — see [docs/ANTIGRAVITY_DOM_SELECTORS.md](docs/ANTIGRAVITY_DOM_SELECTORS.md#12-chat-input-field-message-injection-target).
-
-> **PowerShell**: `remoat doctor` prints the manual launch command in cmd syntax. For a detected v2
-> install that command starts with a quoted full path
-> (`"C:\Users\you\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe" --remote-debugging-port=9222`),
-> which PowerShell parses as a string expression rather than a command. Prefix it with the call
-> operator: `& "C:\Users\you\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe" --remote-debugging-port=9222`.
-
-**Bot not responding to messages** — Make sure Antigravity is running with CDP enabled (`remoat open`) before starting the bot. The bot will warn you on startup if no CDP ports are responding, but it continues running and auto-connects once Antigravity is available.
-
-**CDP connection lost** — If you restart Antigravity, the bot auto-reconnects. Sending any message also triggers reconnection.
-
-**Verbose logging:**
-
-```bash
-remoat --verbose      # see CDP traffic, detector events, and internal state
-```
-
-## How It Works
-
-<p align="center">
-  <a href="https://excalidraw.com/#json=a54sSDUatTXGCtJORO7GJ,muz3R_zi4nbj9RKuRAfbEA">
-    <img src="docs/images/architecture.svg" alt="Remoat architecture diagram" width="700" />
-  </a>
-</p>
-
-1. You send a message in Telegram
-2. Remoat authenticates it against your whitelist, resolves the project context, and injects the prompt into Antigravity via CDP
-3. A response monitor polls Antigravity's DOM at 2-second intervals, detecting progress phases, approval dialogs, errors, and completion
-4. Results stream back to Telegram as formatted messages
-
-The bot never exposes a port, never forwards traffic externally, and never stores your code anywhere but your local disk.
-
-> For a deeper dive, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Click the diagram above for an [interactive version](https://excalidraw.com/#json=a54sSDUatTXGCtJORO7GJ,muz3R_zi4nbj9RKuRAfbEA).
-
-## Project Structure
-
-```
-src/
-  bin/          CLI entry point (Commander subcommands)
-  bot/          grammy bot — event handling, command routing, callback queries
-  commands/     Telegram slash command handlers and message parser
-  services/     core business logic (CDP, response monitoring, detectors, sessions)
-  database/     SQLite repositories (sessions, workspace bindings, templates, schedules)
-  middleware/   auth (user ID whitelist) and input sanitization
-  ui/           Telegram InlineKeyboard builders
-  utils/        config, logging, formatting, i18n, path security, voice/image handling
-tests/          test files mirroring src/ structure
-docs/           architecture docs, DOM selector reference, diagrams
-locales/        i18n translations (en, ja)
-```
-
-## Contributing
-
-Contributions are welcome — whether it's a bug fix, a new feature, documentation improvements, or test coverage.
-
-```bash
-git clone https://github.com/optimistengineer/Remoat.git
-cd Remoat
+git clone https://github.com/Asm-o-Dan/remoat.git
+cd remoat
 npm install
-cp .env.example .env  # fill in your values
-npm run dev           # start with auto-reload
-npm test              # run the test suite
+npm run build
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — code style, commit conventions, PR process, and project architecture.
+### 3. Configuration
+Copy the `.env.template` to `.env` and fill in your details:
+```bash
+cp .env.template .env
+```
+Edit `.env`:
+```env
+TELEGRAM_BOT_TOKEN=your_token_from_botfather
+ALLOWED_USER_IDS=your_telegram_user_id
+WORKSPACE_DIR=C:\path\to\your\projects
+EXTRACTION_MODE=dom-structured
+```
 
-## Star History
+### 4. Launch Antigravity in CDP Mode
+On Windows:
+```bash
+open_antigravity_debug.bat
+```
+Or via CLI:
+```bash
+node dist/bin/cli.js open
+```
 
-[![Star History Chart](https://api.star-history.com/svg?repos=optimistengineer/remoat&type=date&legend=top-left)](https://www.star-history.com/#optimistengineer/remoat&type=date&legend=top-left)
+### 5. Start the Bot
+```bash
+start_telegram_remote.bat
+```
+Or via CLI:
+```bash
+npm run start:built
+```
 
-## License
+Open your Telegram bot, send `/start`, and enjoy controlling your IDE from your smartphone! 📱✨
 
-[MIT](LICENSE)
+---
 
-## Acknowledgements
+## 🏗️ Architecture
 
-Based on [LazyGravity](https://github.com/tokyoweb3/LazyGravity), a Discord bot for remotely controlling Antigravity via CDP. Remoat ports the core architecture to Telegram and adds features like Forum Topics, voice input, and structured DOM extraction.
+```mermaid
+flowchart TD
+    subgraph Mobile ["📱 Smartphone (Telegram Client)"]
+        User["User Prompt / Voice / Commands"]
+    end
+
+    subgraph Bot ["🤖 Remoat Bot Bridge (Node.js / Grammy)"]
+        Router["Message Parser & Router"]
+        SkillsUI["Interactive Skills & Chat UI"]
+        Sanitizer["Security & File Path Validator"]
+        DOMExtractor["DOM Structured Extractor"]
+    end
+
+    subgraph IDE ["💻 Antigravity IDE (Electron / CDP)"]
+        CDP["Chrome DevTools Protocol (Port 9000+)"]
+        Cascade["AI Agent / Cascade Engine"]
+        FileSystem["Local Project Files & Tools"]
+    end
+
+    User <-->|Telegram MTProto API| Bot
+    Bot <-->|WebSocket JSON-RPC (CDP)| CDP
+    CDP <--> Cascade
+    Cascade <--> FileSystem
+```
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
+Original upstream project by [optimistengineer/Remoat](https://github.com/optimistengineer/Remoat). Enhanced and maintained by [Asm-o-Dan](https://github.com/Asm-o-Dan).

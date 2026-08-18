@@ -63,7 +63,8 @@ import { sendTemplateUI, TEMPLATE_BTN_PREFIX, parseTemplateButtonId } from '../u
 import { sendAutoAcceptUI, AUTOACCEPT_BTN_ON, AUTOACCEPT_BTN_OFF, AUTOACCEPT_BTN_REFRESH } from '../ui/autoAcceptUi';
 import { handleScreenshot } from '../ui/screenshotUi';
 import { buildProjectListUI, PROJECT_SELECT_ID, PROJECT_PAGE_PREFIX, parseProjectPageId } from '../ui/projectListUi';
-import { buildSessionPickerUI, SESSION_SELECT_ID, isSessionSelectId } from '../ui/sessionPickerUi';
+import { buildSessionPickerUI, buildChatsListUI, SESSION_SELECT_ID, isSessionSelectId } from '../ui/sessionPickerUi';
+import { buildSkillsUI, buildSkillDetailUI, sendSkillsUI, AVAILABLE_SKILLS } from '../ui/skillsUi';
 import {
     PLAN_VIEW_BTN, PLAN_PROCEED_BTN, PLAN_EDIT_BTN, PLAN_REFRESH_BTN, PLAN_PAGE_PREFIX,
     buildPlanNotificationUI, buildPlanContentUI, paginatePlanContent,
@@ -94,6 +95,12 @@ const PHASE_ICONS = {
 const MAX_OUTBOUND_GENERATED_IMAGES = 4;
 const TELEGRAM_MSG_LIMIT = 4096;
 const MAX_INLINE_CHUNKS = 5;
+
+declare global {
+    var fileDownloadMap: Map<string, string> | undefined;
+}
+
+global.fileDownloadMap = global.fileDownloadMap || new Map();
 
 /** Convert Telegram HTML back to readable Markdown for .md file attachment */
 function stripHtmlForFile(html: string): string {
@@ -179,12 +186,65 @@ async function sendPromptToAntigravity(
     const enqueueResponse = createSerialTaskQueue('response', monitorTraceId);
     const enqueueActivity = createSerialTaskQueue('activity', monitorTraceId);
 
+    const extractKeyboard = (content: string): InlineKeyboard | undefined => {
+        const kb = new InlineKeyboard();
+        const pathModule = require('path');
+        const fsModule = require('fs');
+        const uniquePaths = new Set<string>();
+        let added = 0;
+
+        const candidatePaths: string[] = [];
+        const fileUriRegex = /(?:file:\/\/\/|vscode:\/\/file\/)([^"'\s<>()\]]+)/gi;
+        let m;
+        while ((m = fileUriRegex.exec(content)) !== null) {
+            candidatePaths.push(decodeURIComponent(m[1]));
+        }
+        const winPathRegex = /\b([a-zA-Z]:[/\\][a-zA-Z0-9._\-/\\\s]+\.[a-zA-Z0-9]{1,10})\b/g;
+        while ((m = winPathRegex.exec(content)) !== null) {
+            candidatePaths.push(m[1].trim());
+        }
+
+        for (const rawPath of candidatePaths) {
+            if (added >= 5) break;
+            try {
+                const normPath = pathModule.resolve(rawPath);
+                if (uniquePaths.has(normPath)) continue;
+                uniquePaths.add(normPath);
+
+                const baseName = pathModule.basename(normPath).toLowerCase();
+                if (baseName.startsWith('.env') || baseName.includes('id_rsa') || baseName.includes('id_ed25519') || baseName === 'sam' || baseName === 'system') {
+                    continue;
+                }
+
+                if (!fsModule.existsSync(normPath) || !fsModule.statSync(normPath).isFile()) {
+                    continue;
+                }
+
+                const fileName = pathModule.basename(normPath);
+                const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+                global.fileDownloadMap?.set(id, normPath);
+
+                if (global.fileDownloadMap && global.fileDownloadMap.size > 100) {
+                    const firstKey = global.fileDownloadMap.keys().next().value;
+                    if (firstKey) global.fileDownloadMap.delete(firstKey);
+                }
+
+                kb.text('📁 ' + fileName, 'download_file:' + id).row();
+                added++;
+            } catch { }
+        }
+        return added > 0 ? kb : undefined;
+    };
+
     const sendMsg = async (text: string): Promise<number | null> => {
         try {
-            const truncated = text.length > TELEGRAM_MSG_LIMIT ? text.slice(0, TELEGRAM_MSG_LIMIT - 20) + '\n...(truncated)' : text;
+            const replyMarkup = extractKeyboard(text);
+            const cleanText = text.replace(/<a\s[^>]*href="file:\/\/\/[^"]*"[^>]*>([^<]+)<\/a>|`?\[([^\]]+)\]\(file:\/\/\/[^)]+\)`?/g, '<code>$1$2</code>');
+            const truncated = cleanText.length > TELEGRAM_MSG_LIMIT ? cleanText.slice(0, TELEGRAM_MSG_LIMIT - 20) + '\n...(truncated)' : cleanText;
             const msg = await api.sendMessage(channel.chatId, truncated, {
                 parse_mode: 'HTML',
                 message_thread_id: channel.threadId,
+                reply_markup: replyMarkup
             });
             return msg.message_id;
         } catch (e) {
@@ -1326,6 +1386,69 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         );
     });
 
+    // /chats, /sessions command
+    bot.command(['chats', 'sessions'], async (ctx) => {
+        const ch = getChannel(ctx);
+        const resolved = await resolveWorkspaceAndCdp(ch);
+        const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+        if (!cdp) {
+            await ctx.reply('⚠️ Not connected to Antigravity. Send a message or use /project first.');
+            return;
+        }
+        const sessions = await chatSessionService.getSidebarSessions(cdp);
+        const payload = buildChatsListUI(sessions, 0);
+        await replyHtml(ctx, payload.text, payload.keyboard);
+    });
+
+    // /summary, /recap, /brief commands
+    bot.command(['summary', 'recap', 'brief'], async (ctx) => {
+        const ch = getChannel(ctx);
+        const resolved = await resolveWorkspaceAndCdp(ch);
+        const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+        if (!cdp) {
+            await ctx.reply('⚠️ Not connected to Antigravity. Send a message or use /project first.');
+            return;
+        }
+        const summaryPrompt = 'Опиши кратко, что мы делаем в этом чате, какие задачи уже решены и какой текущий статус проекта.';
+        await promptDispatcher.send({
+            channel: ch,
+            prompt: summaryPrompt,
+            cdp,
+            inboundImages: [],
+            options: { chatSessionService, chatSessionRepo, topicManager, titleGenerator }
+        });
+    });
+
+    // /skills, /skill commands
+    bot.command(['skills', 'skill'], async (ctx) => {
+        const arg = (ctx.match || '').trim();
+        if (arg) {
+            const parts = arg.split(/\s+/);
+            const skillName = parts[0].toLowerCase();
+            const customPrompt = parts.slice(1).join(' ');
+            const foundSkill = AVAILABLE_SKILLS.find(s => s.name === skillName || s.name.startsWith(skillName));
+            if (foundSkill) {
+                const ch = getChannel(ctx);
+                const resolved = await resolveWorkspaceAndCdp(ch);
+                const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+                if (!cdp) {
+                    await ctx.reply('⚠️ Not connected to Antigravity.');
+                    return;
+                }
+                const prompt = customPrompt ? `${foundSkill.prompt}\n\nДополнительные указания: ${customPrompt}` : foundSkill.prompt;
+                await promptDispatcher.send({
+                    channel: ch,
+                    prompt,
+                    cdp,
+                    inboundImages: [],
+                    options: { chatSessionService, chatSessionRepo, topicManager, titleGenerator }
+                });
+                return;
+            }
+        }
+        await sendSkillsUI(async (text, keyboard) => { await replyHtml(ctx, text, keyboard); }, 0);
+    });
+
     // /ping command
     bot.command('ping', async (ctx) => {
         const start = Date.now();
@@ -1341,6 +1464,29 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     bot.on('callback_query:data', async (ctx) => {
         const data = ctx.callbackQuery.data;
         const ch = getChannelFromCb(ctx);
+
+        // File download
+        if (data.startsWith('download_file:')) {
+            const fileId = data.replace('download_file:', '');
+            const filePath = global.fileDownloadMap?.get(fileId);
+            if (!filePath) {
+                await ctx.answerCallbackQuery({ text: 'File session expired.' });
+                return;
+            }
+            try {
+                await ctx.answerCallbackQuery({ text: 'Uploading file...' });
+                const fs = require('fs');
+                if (!fs.existsSync(filePath)) {
+                    await ctx.reply(`❌ File not found on disk: ${require('path').basename(filePath)}`);
+                    return;
+                }
+                await ctx.replyWithDocument(new InputFile(filePath));
+            } catch (e: any) {
+                logger.error('File upload failed:', e);
+                await ctx.reply(`❌ Failed to send file: ${e?.message || e}`);
+            }
+            return;
+        }
 
         // Mode selection
         if (data.startsWith('mode_select:')) {
@@ -1366,7 +1512,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         // Model selection
         if (data.startsWith('model_btn_')) {
             const modelName = data.replace('model_btn_', '');
-            const cdp = getCurrentCdp(bridge);
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
             if (!cdp) { await ctx.answerCallbackQuery({ text: 'Not connected to CDP.' }); return; }
             const res = await cdp.setUiModel(modelName);
             if (res.ok) {
@@ -1381,11 +1528,150 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
         // Model refresh
         if (data === 'model_refresh_btn') {
-            const cdp = getCurrentCdp(bridge);
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
             if (!cdp) { await ctx.answerCallbackQuery({ text: 'Not connected.' }); return; }
             const payload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota());
             if (payload) try { await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard }); } catch (e) { logger.debug('[editMsg] Telegram edit failed (expected for unmodified):', e); }
             await ctx.answerCallbackQuery({ text: 'Refreshed' });
+            return;
+        }
+
+        // Switch chat from /chats list
+        if (data.startsWith('switch_chat:')) {
+            const key = data.replace('switch_chat:', '');
+            const target = global.chatSwitchMap?.get(key);
+            if (!target) {
+                await ctx.answerCallbackQuery({ text: 'Session info expired. Please run /chats again.' });
+                return;
+            }
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+            if (!cdp) {
+                await ctx.answerCallbackQuery({ text: 'Not connected to CDP.' });
+                return;
+            }
+            const res = await chatSessionService.activateSessionByIdOrTitle(cdp, target.id, target.title);
+            if (res.ok) {
+                const sessions = await chatSessionService.getSidebarSessions(cdp);
+                const payload = buildChatsListUI(sessions, 0);
+                try {
+                    await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
+                } catch { }
+                await ctx.answerCallbackQuery({ text: `Switched to: ${target.title}` });
+            } else {
+                await ctx.answerCallbackQuery({ text: res.error || 'Failed to switch chat.' });
+            }
+            return;
+        }
+
+        // Paginate chats list
+        if (data.startsWith('chats_page:')) {
+            const page = parseInt(data.replace('chats_page:', ''), 10) || 0;
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+            if (cdp) {
+                const sessions = await chatSessionService.getSidebarSessions(cdp);
+                const payload = buildChatsListUI(sessions, page);
+                try {
+                    await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
+                } catch { }
+            }
+            await ctx.answerCallbackQuery();
+            return;
+        }
+
+        // Refresh chats list
+        if (data.startsWith('refresh_chats_btn')) {
+            const parts = data.split(':');
+            const page = parts.length > 1 ? (parseInt(parts[1], 10) || 0) : 0;
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+            if (!cdp) {
+                await ctx.answerCallbackQuery({ text: 'Not connected to CDP.' });
+                return;
+            }
+            const sessions = await chatSessionService.getSidebarSessions(cdp);
+            const payload = buildChatsListUI(sessions, page);
+            try {
+                await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
+            } catch { }
+            await ctx.answerCallbackQuery({ text: 'Refreshed' });
+            return;
+        }
+
+        // New chat button from /chats UI
+        if (data === 'new_chat_btn') {
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+            if (!cdp) {
+                await ctx.answerCallbackQuery({ text: 'Not connected to CDP.' });
+                return;
+            }
+            const chatResult = await chatSessionService.startNewChat(cdp);
+            if (chatResult.ok) {
+                await ctx.answerCallbackQuery({ text: 'New chat started!' });
+                const sessions = await chatSessionService.getSidebarSessions(cdp);
+                const payload = buildChatsListUI(sessions, 0);
+                try {
+                    await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
+                } catch { }
+            } else {
+                await ctx.answerCallbackQuery({ text: chatResult.error || 'Failed to start new chat.' });
+            }
+            return;
+        }
+
+        // Paginate skills list
+        if (data.startsWith('skills_page:')) {
+            const page = parseInt(data.replace('skills_page:', ''), 10) || 0;
+            const payload = buildSkillsUI(page);
+            try {
+                await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
+            } catch { }
+            await ctx.answerCallbackQuery();
+            return;
+        }
+
+        // View skill details
+        if (data.startsWith('skill_view:')) {
+            const skillName = data.replace('skill_view:', '');
+            const payload = buildSkillDetailUI(skillName);
+            try {
+                await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
+            } catch { }
+            await ctx.answerCallbackQuery();
+            return;
+        }
+
+        // Run skill directly
+        if (data.startsWith('skill_run:')) {
+            const skillName = data.replace('skill_run:', '');
+            const foundSkill = AVAILABLE_SKILLS.find(s => s.name === skillName);
+            if (foundSkill) {
+                const resolved = await resolveWorkspaceAndCdp(ch);
+                const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+                if (!cdp) {
+                    await ctx.answerCallbackQuery({ text: 'Not connected to CDP.' });
+                    return;
+                }
+                await ctx.answerCallbackQuery({ text: `Running ${foundSkill.label}...` });
+                await promptDispatcher.send({
+                    channel: ch,
+                    prompt: foundSkill.prompt,
+                    cdp,
+                    inboundImages: [],
+                    options: { chatSessionService, chatSessionRepo, topicManager, titleGenerator }
+                });
+            } else {
+                await ctx.answerCallbackQuery({ text: 'Skill not found.' });
+            }
+            return;
+        }
+
+        // No-op buttons (pagination indicators)
+        if (data === 'chats_noop' || data === 'skills_noop') {
+            await ctx.answerCallbackQuery();
             return;
         }
 
@@ -2167,28 +2453,29 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         onStart: async (botInfo) => {
             logger.info(`Bot started as @${botInfo.username} | extractionMode=${config.extractionMode}`);
             try {
-                await bot.api.setMyCommands([
-                    { command: 'start', description: 'Welcome message' },
-                    { command: 'help', description: 'Show all commands' },
-                    { command: 'project', description: 'Select a project' },
-                    { command: 'new', description: 'Start a new chat session' },
-                    { command: 'chat', description: 'Current session info' },
-                    { command: 'mode', description: 'Change execution mode' },
-                    { command: 'model', description: 'Change LLM model' },
-                    { command: 'stop', description: 'Interrupt active generation' },
-                    { command: 'screenshot', description: 'Capture Antigravity screen' },
-                    { command: 'close', description: 'Terminate active Antigravity session' },
-                    { command: 'template', description: 'Show prompt templates' },
-                    { command: 'template_add', description: 'Register a template' },
-                    { command: 'template_delete', description: 'Delete a template' },
-                    { command: 'allow', description: 'Approve pending IDE confirmation dialog' },
-                    { command: 'allow_chat', description: 'Always-allow pending IDE confirmation dialog' },
-                    { command: 'deny', description: 'Deny pending IDE confirmation dialog' },
-                    { command: 'autoaccept', description: 'Toggle auto-approve mode' },
-                    { command: 'status', description: 'Bot status overview' },
-                    { command: 'ping', description: 'Check latency' },
-                ]);
-                logger.info('Telegram command menu registered successfully');
+                const ruCommands = [
+                    { command: 'chats', description: '💬 Список чатов проекта (с кнопками)' },
+                    { command: 'new', description: '➕ Начать новый чат в проекте' },
+                    { command: 'skills', description: '🚀 Каталог скиллов агента' },
+                    { command: 'summary', description: '📋 Краткая сводка по чату' },
+                    { command: 'quota', description: '📊 Квоты, лимиты и остаток моделей' },
+                    { command: 'models', description: '🧠 Выбрать нейросеть (LLM)' },
+                    { command: 'workspaces', description: '🪟 Переключить окно Antigravity' },
+                    { command: 'project', description: '📁 Сменить рабочий проект' },
+                    { command: 'mode', description: '⚙️ Режим агента (Fast / Planning)' },
+                    { command: 'screenshot', description: '📸 Сделать скриншот окна IDE' },
+                    { command: 'stop', description: '🛑 Прервать текущую генерацию' },
+                    { command: 'autoaccept', description: '⚡ Авто-одобрение действий' },
+                    { command: 'chat', description: 'ℹ️ Инфо о текущей сессии' },
+                    { command: 'status', description: '🔍 Статус подключений и окон' },
+                    { command: 'ping', description: '🏓 Проверить задержку сети' },
+                    { command: 'help', description: '❓ Полная справка' },
+                ];
+                await bot.api.setMyCommands(ruCommands);
+                try {
+                    await bot.api.setMyCommands(ruCommands, { language_code: 'ru' });
+                } catch { }
+                logger.info('Telegram command menu registered successfully (RU & default)');
             } catch (err) {
                 logger.error('Failed to register command menu:', err);
             }

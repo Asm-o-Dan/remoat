@@ -14,8 +14,16 @@ import { htmlToTelegramHtml } from '../utils/htmlToTelegramMarkdown';
 // Types
 // ---------------------------------------------------------------------------
 
+export type SegmentKind =
+    | 'assistant-body'
+    | 'thinking'
+    | 'thinking-content'
+    | 'tool-call'
+    | 'tool-result'
+    | 'feedback';
+
 export interface AssistantDomSegment {
-    kind: 'assistant-body' | 'thinking' | 'thinking-content' | 'tool-call' | 'tool-result' | 'feedback';
+    kind: SegmentKind;
     text: string;
     role: 'assistant';
     messageIndex: number;
@@ -203,6 +211,7 @@ export function extractAssistantSegmentsPayloadScript(): string {
         if (node.closest('[class*="feedback"], footer')) return true;
         if (node.closest('.notify-user-container')) return true;
         if (node.closest('[role="dialog"]')) return true;
+        if (node.closest('[class*="artifact"], [class*="file-card"], .file-tree, [class*="code-block-header"]')) return true;
         return false;
     };
 
@@ -214,8 +223,14 @@ export function extractAssistantSegmentsPayloadScript(): string {
     var combinedSelector = selectors.join(', ');
     var nodes = scope.querySelectorAll(combinedSelector);
 
-    for (var i = nodes.length - 1; i >= 0; i--) {
-        var node = nodes[i];
+    // If scope matches a selector directly and has no matched children, include scope
+    var candidateNodes = Array.from(nodes);
+    if (candidateNodes.length === 0 && scope.matches && scope.matches(combinedSelector)) {
+        candidateNodes.push(scope);
+    }
+
+    for (var i = candidateNodes.length - 1; i >= 0; i--) {
+        var node = candidateNodes[i];
         if (!node || seen.has(node)) continue;
         seen.add(node);
         if (isInsideExcludedContainer(node)) continue;
@@ -286,99 +301,31 @@ export function extractAssistantSegmentsPayloadScript(): string {
                 text: bodyHtml,
                 role: 'assistant',
                 messageIndex: 0,
-                domPath: 'multi-selector'
+                domPath: node.className || node.tagName.toLowerCase()
             });
             bodyFound = true;
-            break; // Only take the last (most recent) output node
+            break; // Found the primary body
         }
     }
 
-    // Pass 1.5: Extract artifact cards (planning cards, etc.) from chat
-    var artifactCards = [];
-    var OPEN_PATS_15 = ['open', 'view'];
-    var PROCEED_PATS_15 = ['proceed', 'accept', 'approve'];
-    var btnNorm15 = function(b) { return (b.textContent || '').toLowerCase().replace(/\s+/g, ' ').trim(); };
-    var allBtns = Array.from(scope.querySelectorAll('button')).filter(function(b) { return b.offsetParent !== null; });
-    var openBtn = allBtns.find(function(b) { var t = btnNorm15(b); return OPEN_PATS_15.some(function(p) { return t === p || t.includes(p); }); });
-    var proceedBtn = allBtns.find(function(b) { var t = btnNorm15(b); return PROCEED_PATS_15.some(function(p) { return t === p || t.includes(p); }); });
-    
-    if (openBtn) {
-        var p = openBtn.parentElement;
-        // If both buttons exist, walk up from proceedBtn to their common ancestor
-        if (proceedBtn) {
-            p = proceedBtn.parentElement;
-            while (p && p !== scope && !p.contains(openBtn)) { p = p.parentElement; }
-        }
-        if (p) {
-            var card = p.closest && p.closest('[class*="border"][class*="rounded"]');
-            if (!card) card = p.parentElement && p.parentElement.parentElement;
-            if (card) artifactCards.push(card);
-        }
-    }
-    
-    var notifyCards = Array.from(scope.querySelectorAll('.notify-user-container'));
-    for (var ni = 0; ni < notifyCards.length; ni++) {
-        if (!artifactCards.includes(notifyCards[ni])) artifactCards.push(notifyCards[ni]);
-    }
-
-    for (var ci = 0; ci < artifactCards.length; ci++) {
-        var card = artifactCards[ci];
-        var mdNodes = Array.from(card.querySelectorAll('.rendered-markdown, .markdown-body, .prose'));
-        if (mdNodes.length === 0) {
-            mdNodes = [card];
-        }
-        for (var mi = 0; mi < mdNodes.length; mi++) {
-            var mdNode = mdNodes[mi];
-            var clone = mdNode.cloneNode(true);
-            
-            var cardBtns = clone.querySelectorAll('button');
-            for(var b=0; b<cardBtns.length; b++) cardBtns[b].parentNode.removeChild(cardBtns[b]);
-            
-            var pres = clone.querySelectorAll('pre');
-            for (var pi = 0; pi < pres.length; pi++) {
-                var pre = pres[pi];
-                var langDiv = pre.querySelector('.font-sans.text-sm, [class*="text-sm"][class*="opacity"]');
-                var lang = langDiv ? (langDiv.textContent || '').trim() : '';
-
-                var styles = pre.querySelectorAll('style');
-                for (var si = 0; si < styles.length; si++) {
-                    styles[si].parentNode.removeChild(styles[si]);
-                }
-
-                var headerBar = pre.querySelector('[class*="rounded-t"][class*="border-b"]');
-                if (headerBar) headerBar.parentNode.removeChild(headerBar);
-
-                var codeLines = pre.querySelectorAll('.code-line, [class*="code-line"]');
-                var codeText;
-                if (codeLines.length > 0) {
-                    var lineTexts = [];
-                    for (var cli = 0; cli < codeLines.length; cli++) {
-                        lineTexts.push(codeLines[cli].textContent || '');
-                    }
-                    codeText = lineTexts.join('\\n');
-                } else {
-                    codeText = (pre.innerText || '').trim();
-                    if (lang && codeText.startsWith(lang)) {
-                        codeText = codeText.slice(lang.length).trim();
-                    }
-                }
-                codeText = codeText.replace(/\\nCopy$/i, '').replace(/\\ncopy code$/i, '').trim();
-                
-                var newPre = document.createElement('pre');
-                var newCode = document.createElement('code');
-                if (lang) newCode.setAttribute('class', 'language-' + lang);
-                newCode.textContent = codeText;
-                newPre.appendChild(newCode);
-                pre.parentNode.replaceChild(newPre, pre);
-            }
-            
-            var topStyles = clone.querySelectorAll('style, script');
-            for (var tsi = 0; tsi < topStyles.length; tsi++) {
-                topStyles[tsi].parentNode.removeChild(topStyles[tsi]);
-            }
-            
-            var artifactHtml = clone.innerHTML;
+    // Pass 1.5: Fallback for Antigravity artifact-only responses (e.g. implementation_plan.md)
+    // When AG generates an artifact, the response body may be inside an artifact card
+    // container (.border.rounded-md) that was excluded by Pass 1.
+    // Extract the markdown content from the artifact card so the user sees the plan.
+    if (!bodyFound) {
+        var artifactCards = scope.querySelectorAll('[class*="artifact"], [class*="file-card"], div.border.rounded-md, div.border.rounded-lg');
+        for (var aci = artifactCards.length - 1; aci >= 0; aci--) {
+            var card = artifactCards[aci];
+            if (seen.has(card)) continue;
+            // Skip small UI widgets (buttons, badges) — artifact cards contain substantial content
+            var cardText = (card.innerText || card.textContent || '').replace(/\\r/g, '').trim();
+            if (!cardText || cardText.length < 50) continue;
+            // Find rendered markdown or code inside the artifact card
+            var mdNodes = card.querySelectorAll('.rendered-markdown, .prose, [class*="markdown"], pre');
+            var targetNode = mdNodes.length > 0 ? mdNodes[0] : card;
+            var artifactHtml = targetNode.innerHTML;
             if (artifactHtml && artifactHtml.trim()) {
+                // Wrap in a div to ensure valid HTML
                 if (mdNodes[0] === card) {
                     artifactHtml = '<div>' + artifactHtml + '</div>';
                 }
@@ -456,10 +403,6 @@ export function extractAssistantSegmentsPayloadScript(): string {
     }
 
     // Pass 2.5: Broad activity scan - leaf-ish elements with activity-like text
-    // Uses querySelectorAll('*') to find activity nodes that don't match content
-    // selectors (e.g. "Analyzed package.json#L1-75" inside <div class="flex flex-row">).
-    // Excludes nodes inside response body containers to avoid false positives.
-    // Uses ancestor dedup to prevent capturing both parent and child activity nodes.
     var actSeen = new Set();
     var allEls = scope.querySelectorAll('*');
     for (var ai = 0; ai < allEls.length; ai++) {
@@ -467,38 +410,27 @@ export function extractAssistantSegmentsPayloadScript(): string {
         if (el.children.length > 3) continue;       // leaf-ish only
         if (seen.has(el)) continue;                  // already captured in Pass 1/2
         if (isInsideExcludedContainer(el)) continue;
-        // Skip nodes inside response body containers (prevents capturing inline words)
         if (el.closest('.leading-relaxed, .rendered-markdown, .prose, .animate-markdown, [data-message-role], [data-message-author-role]')) continue;
         var aText = (el.innerText || el.textContent || '').replace(/\\r/g, '').trim();
         if (!aText || aText.length < 5 || aText.length > 300) continue;
-        // Skip junk: pure numbers, single short words
         if (/^\\d+$/.test(aText)) continue;
-        // Skip model selector / dropdown UI text (contains multiple model names)
         var aLower = aText.toLowerCase();
         if ((aLower.includes('gemini') || aLower.includes('claude') || aLower.includes('gpt')) && aLower.includes('send')) continue;
         var isThinking = looksLikeThinking(aText);
         if (isThinking || looksLikeActivityLog(aText) || looksLikeToolOutput(aText)) {
-            // When we find a short activity verb (e.g. "Analyzed" alone), the file
-            // reference may be in a sibling element.  Walk up to the nearest ancestor
-            // (max 3 levels) whose innerText contains the verb AND more context
-            // (e.g. "Analyzed package.json#L1-75").
             var bestText = aText;
             if (!isThinking && looksLikeActivityLog(aText) && aText.length < 60) {
                 var ancestor = el.parentElement;
                 for (var up = 0; up < 3 && ancestor && ancestor !== scope; up++) {
-                    // Don't cross into excluded containers
                     if (ancestor.closest && ancestor.closest('.leading-relaxed, .rendered-markdown, .prose, .animate-markdown, [data-message-role], [data-message-author-role]')) break;
                     var ancestorText = (ancestor.innerText || ancestor.textContent || '').replace(/\\r/g, '').trim();
-                    // Accept if it still looks like activity, is longer, and not too long
                     if (ancestorText && ancestorText.length > bestText.length && ancestorText.length <= 300 && looksLikeActivityLog(ancestorText)) {
                         bestText = ancestorText;
-                        // Mark ancestor as seen to prevent child duplication
                         actSeen.add(ancestor);
                     }
                     ancestor = ancestor.parentElement;
                 }
             }
-            // Ancestor dedup: skip if a parent was already captured as activity
             var dup = false;
             var p = el.parentElement;
             while (p && p !== scope) {
