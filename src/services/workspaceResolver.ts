@@ -41,6 +41,13 @@ export function channelKeyFromChannel(ch: TelegramChannel): string {
 }
 
 /**
+ * Check if the channel is the root chat or General forum topic (threadId === 1 or undefined).
+ */
+export function isGeneralTopic(ch: TelegramChannel): boolean {
+    return !ch.threadId || ch.threadId === 1;
+}
+
+/**
  * Resolve a TelegramChannel to a workspace binding + active CDP connection.
  *
  * Returns a discriminated union so callers can show the right error message:
@@ -52,7 +59,11 @@ export async function resolveWorkspaceAndCdp(
     deps: WorkspaceResolverDeps,
 ): Promise<ResolveOutcome> {
     const key = channelKeyFromChannel(ch);
-    const binding = deps.findBinding(key);
+    // Try exact channel key first; if in a forum topic, fallback to parent supergroup binding
+    let binding = deps.findBinding(key);
+    if (!binding && ch.threadId) {
+        binding = deps.findBinding(String(ch.chatId));
+    }
 
     if (!binding) {
         return {

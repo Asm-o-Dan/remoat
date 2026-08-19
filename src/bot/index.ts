@@ -43,6 +43,7 @@ import {
 import {
     resolveWorkspaceAndCdp as resolveWorkspaceAndCdpImpl,
     channelKeyFromChannel,
+    isGeneralTopic,
     ResolveOutcome,
 } from '../services/workspaceResolver';
 import { classifyAssistantSegments, extractAssistantSegmentsPayloadScript } from '../services/assistantDomExtractor';
@@ -545,6 +546,22 @@ async function sendPromptToAntigravity(
                 await detector.resetBaseline().catch((err: Error) =>
                     logger.error('[sendPrompt] PlanningDetector baseline reset failed:', err),
                 );
+            }
+        }
+
+        // Pre-flight session switch check: ensure IDE has the correct chat active for this topic/channel
+        if (options?.chatSessionRepo && options?.chatSessionService) {
+            const chKey = channelKey(channel);
+            const session = options.chatSessionRepo.findByChannelId(chKey);
+            if (session?.displayName) {
+                try {
+                    const switchRes = await options.chatSessionService.ensureSessionActive(cdp, session.displayName);
+                    if (switchRes.switched) {
+                        logger.info(`[sendPrompt] Auto-switched IDE session to "${session.displayName}" for channel ${chKey}`);
+                    }
+                } catch (err) {
+                    logger.warn(`[sendPrompt] Pre-flight ensureSessionActive warning:`, err);
+                }
             }
         }
 
@@ -2256,16 +2273,29 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         }
         // ── End concurrency gate ────────────────────────────────────────────
 
-        const session = chatSessionRepo.findByChannelId(key);
-        if (session?.displayName) {
-            registerApprovalSessionChannel(bridge, resolved.projectName, session.displayName, ch);
+        let session = chatSessionRepo.findByChannelId(key);
+        if (!session && ch.threadId && !isGeneralTopic(ch)) {
+            // New sub-topic created in Supergroup -> allocate chat session and initialize
+            const nextNum = chatSessionRepo.getNextSessionNumber(String(ch.chatId));
+            session = chatSessionRepo.create({
+                channelId: key,
+                categoryId: String(ch.chatId),
+                workspacePath: resolved.workspacePath,
+                sessionNumber: nextNum,
+                guildId: String(ch.chatId),
+            });
+            try {
+                await chatSessionService.startNewChat(resolved.cdp);
+            } catch (e) {
+                logger.debug('[startNewChat] Failed for new topic:', e);
+            }
         }
 
-        if (session?.isRenamed && session.displayName) {
-            const activationResult = await chatSessionService.activateSessionByTitle(resolved.cdp, session.displayName);
+        if (session?.displayName) {
+            registerApprovalSessionChannel(bridge, resolved.projectName, session.displayName, ch);
+            const activationResult = await chatSessionService.ensureSessionActive(resolved.cdp, session.displayName);
             if (!activationResult.ok) {
-                await ctx.reply(`⚠️ Could not route to session (${session.displayName}).`);
-                return;
+                logger.warn(`[Routing] Could not switch to session (${session.displayName}): ${activationResult.error}`);
             }
         } else if (session && !session.isRenamed) {
             try { await chatSessionService.startNewChat(resolved.cdp); }

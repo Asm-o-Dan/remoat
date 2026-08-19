@@ -1019,4 +1019,45 @@ export class ChatSessionService {
             return { ok: false, error: e?.message || String(e) };
         }
     }
+
+    /**
+     * Ensure the specified session is active in the IDE.
+     * If the session is already active, returns { ok: true, switched: false }.
+     * If a different session is active, attempts to activate target via sidebar or Past Conversations,
+     * and returns { ok: true, switched: true }.
+     */
+    async ensureSessionActive(
+        cdpService: CdpService,
+        targetTitle: string,
+        targetId?: string,
+    ): Promise<{ ok: boolean; switched: boolean; error?: string }> {
+        if (!targetTitle && !targetId) {
+            return { ok: true, switched: false };
+        }
+
+        try {
+            const current = await this.getCurrentSessionInfo(cdpService);
+            if (targetTitle && current?.title) {
+                const normalize = (s: string) => (s || '').trim().toLowerCase().replace(/[^a-z0-9а-яё]/gi, '');
+                const curNorm = normalize(current.title);
+                const targetNorm = normalize(targetTitle);
+                if (curNorm && targetNorm && (curNorm === targetNorm || curNorm.includes(targetNorm) || targetNorm.includes(curNorm))) {
+                    return { ok: true, switched: false };
+                }
+            }
+
+            // Mismatch detected -> switch session
+            let switchRes = await this.activateSessionByIdOrTitle(cdpService, targetId, targetTitle);
+            if (!switchRes.ok && targetTitle) {
+                switchRes = await this.activateSessionByTitle(cdpService, targetTitle, { maxWaitMs: 5000, retryIntervalMs: 500 });
+            }
+
+            if (switchRes.ok) {
+                return { ok: true, switched: true };
+            }
+            return { ok: false, switched: false, error: switchRes.error };
+        } catch (e: any) {
+            return { ok: false, switched: false, error: e?.message || String(e) };
+        }
+    }
 }
