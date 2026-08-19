@@ -1221,10 +1221,13 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
     // /screenshot command
     bot.command('screenshot', async (ctx) => {
+        const ch = getChannel(ctx);
+        const resolved = await resolveWorkspaceAndCdp(ch);
+        const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
         await handleScreenshot(
             async (input, caption) => { await ctx.replyWithPhoto(input, { caption }); },
             async (text) => { await ctx.reply(text); },
-            getCurrentCdp(bridge),
+            cdp,
         );
     });
 
@@ -1492,9 +1495,20 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         if (data.startsWith('mode_select:')) {
             const selectedMode = data.replace('mode_select:', '');
             modeService.setMode(selectedMode);
-            const cdp = getCurrentCdp(bridge);
-            if (cdp) { const res = await cdp.setUiMode(selectedMode); if (!res.ok) logger.warn(`[Mode] UI switch failed: ${res.error}`); }
-            const { text, keyboard } = await buildModeUI(modeService, { getCurrentCdp: () => getCurrentCdp(bridge) });
+            if (selectedMode === 'turbo') {
+                bridge.autoAccept.handle('on');
+            }
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+            if (cdp) {
+                try {
+                    const res = await cdp.setSecurityPreset(selectedMode);
+                    if (!res.ok) logger.warn(`[Mode] Security Preset switch failed: ${res.error}`);
+                } catch (err: any) {
+                    logger.warn(`[Mode] setSecurityPreset error: ${err.message}`);
+                }
+            }
+            const { text, keyboard } = await buildModeUI(modeService, { getCurrentCdp: () => cdp });
             try {
                 await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard });
             } catch (e) { logger.debug('[modeSelect] editMessageText failed (expected if unchanged):', e); }
@@ -2155,10 +2169,13 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             }
 
             if (parsed.commandName === 'screenshot') {
+                const ch = getChannel(ctx);
+                const resolved = await resolveWorkspaceAndCdp(ch);
+                const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
                 await handleScreenshot(
                     async (input, caption) => { await ctx.replyWithPhoto(input, { caption }); },
                     async (text) => { await ctx.reply(text); },
-                    getCurrentCdp(bridge),
+                    cdp,
                 );
                 return;
             }

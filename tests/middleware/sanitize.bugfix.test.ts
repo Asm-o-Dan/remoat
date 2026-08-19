@@ -2,7 +2,7 @@ import { resolveSafePath } from '../../src/middleware/sanitize';
 import path from 'path';
 
 describe('resolveSafePath — bug fix coverage', () => {
-    const baseDir = '/home/user/workspace';
+    const baseDir = path.resolve('/home/user/workspace');
 
     it('allows subdirectory paths', () => {
         expect(resolveSafePath('a/b/c', baseDir)).toBe(path.resolve(baseDir, 'a/b/c'));
@@ -29,7 +29,7 @@ describe('resolveSafePath — bug fix coverage', () => {
     });
 
     it('allows absolute paths inside base', () => {
-        const insidePath = path.join(baseDir, 'project', 'file.txt');
+        const insidePath = path.resolve(baseDir, 'project', 'file.txt');
         expect(resolveSafePath(insidePath, baseDir)).toBe(insidePath);
     });
 
