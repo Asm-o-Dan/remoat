@@ -273,7 +273,7 @@ export class CdpService extends EventEmitter {
             t.webSocketDebuggerUrl &&
             !t.title?.includes('Launchpad') &&
             !t.url?.includes('workbench-jetski-agent') &&
-            (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade'))
+            (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade') || t.url?.includes('/c/') || t.url?.includes('127.0.0.1'))
         );
 
         if (!target) {
@@ -287,7 +287,8 @@ export class CdpService extends EventEmitter {
         if (!target) {
             target = allPages.find(t =>
                 t.webSocketDebuggerUrl &&
-                (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade') || t.title?.includes('Launchpad'))
+                !t.title?.includes('Launchpad') &&
+                !t.url?.includes('workbench-jetski-agent')
             );
         }
 
@@ -548,17 +549,27 @@ export class CdpService extends EventEmitter {
             return this.launchAndConnectWorkspace(workspacePath, projectName);
         }
 
-        // Filter workbench pages only (exclude Launchpad, Manager, iframe, worker)
-        const workbenchPages = pages.filter(
+        // Filter workbench pages (exclude Launchpad, Manager, iframe, worker)
+        let workbenchPages = pages.filter(
             (t: any) =>
                 t.type === 'page' &&
                 t.webSocketDebuggerUrl &&
                 !t.title?.includes('Launchpad') &&
                 !t.url?.includes('workbench-jetski-agent') &&
-                t.url?.includes('workbench'),
+                (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade')),
         );
 
-        logger.debug(`[CdpService] Searching for workspace "${projectName}" (port=${respondingPort})... ${workbenchPages.length} workbench pages:`);
+        if (workbenchPages.length === 0) {
+            workbenchPages = pages.filter(
+                (t: any) =>
+                    t.type === 'page' &&
+                    t.webSocketDebuggerUrl &&
+                    !t.title?.includes('Launchpad') &&
+                    !t.url?.includes('workbench-jetski-agent'),
+            );
+        }
+
+        logger.debug(`[CdpService] Searching for workspace "${projectName}" (port=${respondingPort})... ${workbenchPages.length} candidate pages:`);
         for (const p of workbenchPages) {
             logger.debug(`  - title="${p.title}" url=${p.url}`);
         }
@@ -614,6 +625,12 @@ export class CdpService extends EventEmitter {
         projectName: string,
         workspacePath?: string,
     ): Promise<boolean> {
+        // Fast-path: if only 1 active page exists on the debugging port, connect to it directly
+        if (workbenchPages.length === 1) {
+            const onlyPage = workbenchPages[0];
+            await this.connectToPage(onlyPage, projectName);
+            return true;
+        }
         for (const page of workbenchPages) {
             try {
                 // Temporarily connect to retrieve document.title
