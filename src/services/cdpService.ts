@@ -1826,16 +1826,22 @@ export class CdpService extends EventEmitter {
             throw new Error('Not connected to CDP.');
         }
 
-        // Antigravity 1.21.6+ uses <button> elements; older versions use <div>.
-        // Use tag-agnostic class-based selector to support both.
         const expression = `(async () => {
-            const menu = document.querySelector('[role="menu"], [role="listbox"], .model-selector-dropdown');
-            const root = menu || document;
-            return Array.from(root.querySelectorAll('button, div'))
-                .filter(e => !e.closest('.sidebar, .chat-history, [data-testid*="chat-item"]'))
-                .filter(e => e.className.includes('px-2 py-1') && e.className.includes('w-full') && e.className.includes('items-center') && e.className.includes('justify-between'))
-                .map(e => (e.textContent || '').trim().replace(/New$/, '').trim())
-                .filter(t => t.length > 0 && t.length < 60 && !t.includes('Session') && !t.includes('Chat'));
+            const trigger = document.querySelector('[data-testid="model-selector-trigger"], button[aria-label*="Select model"]');
+            let items = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"]'))
+                .filter(el => !el.closest('.sidebar, .chat-history, [data-testid*="conversation"]'));
+            
+            // If menu not already open, open it
+            if (items.length === 0 && trigger) {
+                trigger.click();
+                await new Promise(r => setTimeout(r, 400));
+                items = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"]'))
+                    .filter(el => !el.closest('.sidebar, .chat-history, [data-testid*="conversation"]'));
+            }
+
+            return items
+                .map(e => (e.textContent || '').trim().replace(/New$/, '').replace(/Fast$/, '').trim())
+                .filter(t => t.length > 0 && t !== 'View Usage' && !t.includes('Chat') && !t.includes('Session'));
         })()`;
 
         try {
@@ -1850,7 +1856,6 @@ export class CdpService extends EventEmitter {
             const res = await this.call('Runtime.evaluate', callParams);
             const value = res?.result?.value;
             if (Array.isArray(value) && value.length > 0) {
-                // remove duplicates
                 return Array.from(new Set(value));
             }
             return [];
@@ -1867,11 +1872,20 @@ export class CdpService extends EventEmitter {
         if (!this.isConnectedFlag || !this.ws) {
             return null;
         }
-        // Antigravity 1.21.6+ uses <button> elements; older versions use <div>.
         const expression = `(() => {
-            var selected = Array.from(document.querySelectorAll('button, div'))
-                .filter(e => !e.closest('.sidebar, .chat-history, [data-testid*="chat-item"]'))
-                .find(e => e.className.includes('px-2 py-1') && e.className.includes('w-full') && e.className.includes('items-center') && e.className.includes('justify-between') && e.className.includes('bg-gray-500/20') && !e.className.includes('hover:bg-gray-500/20'));
+            // 1. Check model selector trigger button directly in Antigravity
+            const trigger = document.querySelector('[data-testid="model-selector-trigger"], button[aria-label*="Select model"]');
+            if (trigger) {
+                const text = (trigger.textContent || '').trim();
+                if (text && !text.includes('Session') && !text.includes('Chat')) {
+                    return text;
+                }
+            }
+
+            // 2. Check selected menu item fallback
+            const selected = Array.from(document.querySelectorAll('[role="menuitem"], button, div'))
+                .filter(e => !e.closest('.sidebar, .chat-history, [data-testid*="conversation"]'))
+                .find(e => e.className.includes('px-2 py-1') && e.className.includes('w-full') && e.className.includes('bg-gray-500/20') && !e.className.includes('hover:bg-gray-500/20'));
             return selected ? (selected.textContent || '').trim().replace(/New$/, '').trim() : null;
         })()`;
         try {
@@ -1888,64 +1902,65 @@ export class CdpService extends EventEmitter {
 
     /**
      * Operate Antigravity UI model dropdown to switch to the specified model.
-     * (Step 9: Model/mode switching UI sync)
      *
-     * @param modelName Model name to set (e.g., 'gpt-4o', 'claude-3-opus')
+     * @param modelName Model name to set (e.g., 'Gemini 3.1 Pro (High)', 'Claude Sonnet 4.6', 'gpt-oss-120b')
      */
     async setUiModel(modelName: string): Promise<UiSyncResult> {
         if (!this.isConnectedFlag || !this.ws) {
             throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        // Antigravity 1.21.6+ uses <button> elements; older versions use <div>.
-        // Tag-agnostic class-based selector supports both versions.
-        // textContent may have "New" suffix on newly added models.
         const safeModel = JSON.stringify(modelName);
         const expression = `(async () => {
             const targetModel = ${safeModel};
+            const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const nTarget = normalize(targetModel);
 
-            // Get all items in the model list (button in 1.21.6+, div in older)
-            const modelItems = Array.from(document.querySelectorAll('button, div'))
-                .filter(e => e.className.includes('px-2 py-1') && e.className.includes('w-full') && e.className.includes('items-center') && e.className.includes('justify-between'));
+            const trigger = document.querySelector('[data-testid="model-selector-trigger"], button[aria-label*="Select model"]');
+            if (!trigger) return { ok: false, error: 'Model selector trigger button not found in IDE.' };
 
-            if (modelItems.length === 0) {
-                return { ok: false, error: 'Model list not found. The dropdown may not be open.' };
+            const before = (trigger.textContent || '').trim();
+
+            let items = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"]'))
+                .filter(el => !el.closest('.sidebar, .chat-history, [data-testid*="conversation"]'));
+
+            if (items.length === 0) {
+                trigger.click();
+                await new Promise(r => setTimeout(r, 400));
+                items = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"]'))
+                    .filter(el => !el.closest('.sidebar, .chat-history, [data-testid*="conversation"]'));
             }
 
-            // Match target model by name (compare after removing New suffix)
-            const targetItem = modelItems.find(el => {
-                const text = (el.textContent || '').trim().replace(/New$/, '').trim();
-                return text === targetModel || text.toLowerCase() === targetModel.toLowerCase();
+            if (items.length === 0) {
+                return { ok: false, error: 'Model dropdown list could not be opened.' };
+            }
+
+            const matched = items.find(el => {
+                const text = el.textContent.trim();
+                const nText = normalize(text);
+                if (nText === nTarget || nText.includes(nTarget) || nTarget.includes(nText) || nText.startsWith(nTarget)) return true;
+                if (nTarget.includes('gemini31') && nText.includes('gemini31')) return true;
+                if (nTarget.includes('gemini37') && nText.includes('gemini37')) return true;
+                if (nTarget.includes('gemini36') && nText.includes('gemini36')) return true;
+                if (nTarget.includes('gemini35') && nText.includes('gemini35')) return true;
+                if (nTarget.includes('claude') && nText.includes('claude')) return true;
+                if (nTarget.includes('sonnet') && nText.includes('sonnet')) return true;
+                if (nTarget.includes('opus') && nText.includes('opus')) return true;
+                if (nTarget.includes('gpt') && nText.includes('gpt')) return true;
+                return false;
             });
 
-            if (!targetItem) {
-                const available = modelItems.map(el => (el.textContent || '').trim().replace(/New$/, '').trim()).join(', ');
+            if (!matched) {
+                document.body.click();
+                const available = items.map(el => (el.textContent || '').trim()).filter(t => t !== 'View Usage').join(', ');
                 return { ok: false, error: 'Model "' + targetModel + '" not found. Available: ' + available };
             }
 
-            // Check if already selected
-            if (targetItem.className.includes('bg-gray-500/20') && !targetItem.className.includes('hover:bg-gray-500/20')) {
-                return { ok: true, model: targetModel, alreadySelected: true };
-            }
+            matched.click();
+            await new Promise(r => setTimeout(r, 400));
 
-            // Click to select model
-            targetItem.click();
-            await new Promise(r => setTimeout(r, 500));
-
-            // Verify selection was applied
-            const updatedItems = Array.from(document.querySelectorAll('button, div'))
-                .filter(e => e.className.includes('px-2 py-1') && e.className.includes('w-full') && e.className.includes('items-center') && e.className.includes('justify-between'));
-            const selectedItem = updatedItems.find(el => {
-                const text = (el.textContent || '').trim().replace(/New$/, '').trim();
-                return text === targetModel || text.toLowerCase() === targetModel.toLowerCase();
-            });
-
-            if (selectedItem && selectedItem.className.includes('bg-gray-500/20') && !selectedItem.className.includes('hover:bg-gray-500/20')) {
-                return { ok: true, model: targetModel, verified: true };
-            }
-
-            // Click succeeded but verification failed
-            return { ok: true, model: targetModel, verified: false };
+            const after = (trigger.textContent || '').trim();
+            return { ok: true, model: after || targetModel, before, after };
         })()`;
 
         try {
