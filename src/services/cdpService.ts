@@ -1829,10 +1829,13 @@ export class CdpService extends EventEmitter {
         // Antigravity 1.21.6+ uses <button> elements; older versions use <div>.
         // Use tag-agnostic class-based selector to support both.
         const expression = `(async () => {
-            return Array.from(document.querySelectorAll('button, div'))
+            const menu = document.querySelector('[role="menu"], [role="listbox"], .model-selector-dropdown');
+            const root = menu || document;
+            return Array.from(root.querySelectorAll('button, div'))
+                .filter(e => !e.closest('.sidebar, .chat-history, [data-testid*="chat-item"]'))
                 .filter(e => e.className.includes('px-2 py-1') && e.className.includes('w-full') && e.className.includes('items-center') && e.className.includes('justify-between'))
                 .map(e => (e.textContent || '').trim().replace(/New$/, '').trim())
-                .filter(t => t.length > 0 && t.length < 60);
+                .filter(t => t.length > 0 && t.length < 60 && !t.includes('Session') && !t.includes('Chat'));
         })()`;
 
         try {
@@ -1867,6 +1870,7 @@ export class CdpService extends EventEmitter {
         // Antigravity 1.21.6+ uses <button> elements; older versions use <div>.
         const expression = `(() => {
             var selected = Array.from(document.querySelectorAll('button, div'))
+                .filter(e => !e.closest('.sidebar, .chat-history, [data-testid*="chat-item"]'))
                 .find(e => e.className.includes('px-2 py-1') && e.className.includes('w-full') && e.className.includes('items-center') && e.className.includes('justify-between') && e.className.includes('bg-gray-500/20') && !e.className.includes('hover:bg-gray-500/20'));
             return selected ? (selected.textContent || '').trim().replace(/New$/, '').trim() : null;
         })()`;

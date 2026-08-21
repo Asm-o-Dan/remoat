@@ -29,11 +29,23 @@ export async function buildModelsUI(
     page = 0,
     pageSize = MODEL_PAGE_SIZE,
 ): Promise<ModelsUiPayload | null> {
-    const models = await cdp.getUiModels();
-    const currentModel = await cdp.getCurrentModel();
     const quotaData = await fetchQuota();
+    let currentModel = await cdp.getCurrentModel();
+
+    let models: string[] = [];
+    if (quotaData && quotaData.length > 0) {
+        // Prioritize actual LLM models from the language server
+        models = quotaData.map(q => q.label || q.model).filter(Boolean);
+    } else {
+        // Fallback: try CDP UI models
+        models = await cdp.getUiModels();
+    }
 
     if (models.length === 0) return null;
+
+    if (!currentModel && models.length > 0) {
+        currentModel = models[0];
+    }
 
     const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '');
 

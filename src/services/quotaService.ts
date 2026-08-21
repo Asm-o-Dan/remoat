@@ -27,7 +27,7 @@ export class QuotaService {
 
     private async getUnixProcessInfo(): Promise<{pid: number, csrf_token: string} | null> {
         try {
-            // macOS
+            // macOS / Linux
             const { stdout } = await execAsync('pgrep -fl language_server');
             const lines = stdout.split('\n');
             for (const line of lines) {
@@ -42,15 +42,58 @@ export class QuotaService {
                 }
             }
         } catch (e) {
-            logger.error('Failed to get process info:', e);
+            logger.debug('[QuotaService] Unix process info failed:', e);
         }
         return null;
     }
 
+    private async getProcessInfo(): Promise<{pid: number, csrf_token: string} | null> {
+        if (process.platform === 'win32') {
+            try {
+                const psCmd = `powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name LIKE '%language_server%'\\" | Select-Object ProcessId, CommandLine | ConvertTo-Json"`;
+                const { stdout } = await execAsync(psCmd);
+                if (stdout && stdout.trim()) {
+                    const parsed = JSON.parse(stdout);
+                    const items = Array.isArray(parsed) ? parsed : [parsed];
+                    for (const item of items) {
+                        const cmd = item?.CommandLine || '';
+                        const tokenMatch = cmd.match(/--csrf_token[=\s]+([a-zA-Z0-9\-]+)/);
+                        if (item?.ProcessId && tokenMatch && tokenMatch[1]) {
+                            return { pid: Number(item.ProcessId), csrf_token: tokenMatch[1] };
+                        }
+                    }
+                }
+            } catch (e) {
+                logger.debug('[QuotaService] Windows process lookup failed:', e);
+            }
+            return null;
+        }
+
+        return this.getUnixProcessInfo();
+    }
+
     private async getListeningPorts(pid: number): Promise<number[]> {
         const ports: number[] = [];
+
+        if (process.platform === 'win32') {
+            try {
+                const psCmd = `powershell.exe -NoProfile -Command "Get-NetTCPConnection -OwningProcess ${pid} -State Listen | Select-Object -ExpandProperty LocalPort"`;
+                const { stdout } = await execAsync(psCmd);
+                const lines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                for (const line of lines) {
+                    const port = parseInt(line, 10);
+                    if (port && !ports.includes(port)) {
+                        ports.push(port);
+                    }
+                }
+            } catch (e) {
+                logger.debug(`[QuotaService] Windows ports lookup failed for pid ${pid}:`, e);
+            }
+            if (ports.length > 0) return ports;
+        }
+
         try {
-            // macOS
+            // macOS / Linux
             const { stdout } = await execAsync(`lsof -nP -a -iTCP -sTCP:LISTEN -p ${pid}`);
             const regex = new RegExp(`^\\S+\\s+${pid}\\s+.*?(?:TCP|UDP)\\s+(?:\\*|[\\d.]+|\\[[\\da-f:]+\\]):(\\d+)\\s+\\(LISTEN\\)`, 'gim');
             let match;
@@ -61,7 +104,7 @@ export class QuotaService {
                 }
             }
         } catch (e) {
-            logger.error(`Failed to get ports for pid ${pid}:`, e);
+            logger.debug(`[QuotaService] Failed to get ports for pid ${pid}:`, e);
         }
         return ports;
     }
@@ -127,9 +170,9 @@ export class QuotaService {
     }
 
     public async fetchQuota(retryCount = 0): Promise<ModelQuota[]> {
-        let processInfo = await this.getUnixProcessInfo();
+        let processInfo = await this.getProcessInfo();
         if (!processInfo) {
-            logger.error('No language_server process found.');
+            logger.debug('[QuotaService] No language_server process found.');
             return [];
         }
 
