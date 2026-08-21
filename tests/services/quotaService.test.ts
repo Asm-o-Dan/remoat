@@ -55,8 +55,16 @@ describe('QuotaService', () => {
 
     it('fetches quota info and caches port discovery for the same PID/Token', async () => {
         mockExec.mockImplementation((cmd: string, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
+            if (cmd.includes('Win32_Process')) {
+                cb(null, JSON.stringify({ ProcessId: 123, CommandLine: 'language_server --csrf_token abc-123' }), '');
+                return {} as any;
+            }
             if (cmd.startsWith('pgrep -fl language_server')) {
                 cb(null, '123 language_server --csrf_token abc-123\n', '');
+                return {} as any;
+            }
+            if (cmd.includes('Get-NetTCPConnection')) {
+                cb(null, '4444\n', '');
                 return {} as any;
             }
             if (cmd.startsWith('lsof -nP -a -iTCP -sTCP:LISTEN -p 123')) {
@@ -111,8 +119,8 @@ describe('QuotaService', () => {
         expect(second).toHaveLength(1);
 
         const executedCommands = mockExec.mock.calls.map((call) => call[0] as string);
-        const lsofCalls = executedCommands.filter((cmd) => cmd.startsWith('lsof -nP -a -iTCP -sTCP:LISTEN -p 123'));
-        expect(lsofCalls).toHaveLength(1);
+        const portDiscoveryCalls = executedCommands.filter((cmd) => cmd.startsWith('lsof -nP -a -iTCP -sTCP:LISTEN -p 123') || cmd.includes('Get-NetTCPConnection'));
+        expect(portDiscoveryCalls).toHaveLength(1);
         expect(mockRequest).toHaveBeenCalledTimes(2);
         expect(mockRequest.mock.calls[0][0].port).toBe(4444);
         expect(mockRequest.mock.calls[1][0].port).toBe(4444);
