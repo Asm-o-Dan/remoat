@@ -66,7 +66,7 @@ import { buildProjectListUI, PROJECT_SELECT_ID, PROJECT_PAGE_PREFIX, parseProjec
 import { buildSessionPickerUI, buildChatsListUI, SESSION_SELECT_ID, isSessionSelectId } from '../ui/sessionPickerUi';
 import { buildSkillsText, sendSkillsUI } from '../ui/skillsUi';
 import { scanInstalledSkills } from '../services/skillsScanner';
-import { exec as execCommand } from 'child_process';
+import { exec as execCommand, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -1489,13 +1489,46 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
         const startMsg = await ctx.reply(`⏳ Executing: ${cmd}…`);
 
-        execCommand(cmd, { cwd, timeout: 30000, maxBuffer: 1024 * 1024 * 5 }, async (error, stdout, stderr) => {
-            const rawOut = (stdout || '') + (stderr ? (stdout ? '\n' : '') + stderr : '');
-            // Strip ANSI color codes
+        const isWin = process.platform === 'win32';
+        let execExecutable: string;
+        let execArgs: string[];
+
+        if (isWin) {
+            execExecutable = 'powershell.exe';
+            execArgs = [
+                '-NoProfile',
+                '-NonInteractive',
+                '-ExecutionPolicy', 'Bypass',
+                '-Command',
+                `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; ${cmd}`
+            ];
+        } else {
+            execExecutable = '/bin/sh';
+            execArgs = ['-c', cmd];
+        }
+
+        const child = spawn(execExecutable, execArgs, {
+            cwd,
+            timeout: 30000,
+            windowsHide: true,
+        });
+
+        let stdoutData = '';
+        let stderrData = '';
+
+        child.stdout?.on('data', (d) => {
+            stdoutData += d.toString('utf8');
+        });
+        child.stderr?.on('data', (d) => {
+            stderrData += d.toString('utf8');
+        });
+
+        child.on('close', async (code) => {
+            const rawOut = stdoutData + (stderrData ? (stdoutData ? '\n' : '') + stderrData : '');
             const cleanOut = rawOut.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '').trim();
 
-            const statusIcon = error ? '❌' : '✅';
-            const exitCode = error ? (error.code ?? 1) : 0;
+            const statusIcon = (code === 0) ? '✅' : '❌';
+            const exitCode = code ?? 0;
             const header = `${statusIcon} <b>Command Finished (exit ${exitCode})</b>\n📂 <code>${escapeHtml(cwd)}</code>\n\n`;
 
             if (!cleanOut) {
@@ -1516,6 +1549,15 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 await bot.api.editMessageText(ctx.chat!.id, startMsg.message_id, `${header}<pre><code>${escapeHtml(displayOut)}</code></pre>`, { parse_mode: 'HTML' });
             } catch {
                 await replyHtml(ctx, `${header}<pre><code>${escapeHtml(displayOut)}</code></pre>`);
+            }
+        });
+
+        child.on('error', async (err) => {
+            const header = `❌ <b>Command Execution Error</b>\n📂 <code>${escapeHtml(cwd)}</code>\n\n`;
+            try {
+                await bot.api.editMessageText(ctx.chat!.id, startMsg.message_id, `${header}<pre><code>${escapeHtml(err.message)}</code></pre>`, { parse_mode: 'HTML' });
+            } catch {
+                await replyHtml(ctx, `${header}<pre><code>${escapeHtml(err.message)}</code></pre>`);
             }
         });
     });
