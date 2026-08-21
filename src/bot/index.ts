@@ -1067,29 +1067,34 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     // /help command
     bot.command('help', async (ctx) => {
         await replyHtml(ctx,
-            `<b>📖 Remoat Commands</b>\n\n` +
-            `<b>💬 Chat</b>\n` +
-            `/new — Start a new chat session\n` +
-            `/chat — Show current session info\n\n` +
-            `<b>⏹️ Control</b>\n` +
-            `/stop — Interrupt active LLM generation\n` +
-            `/screenshot — Capture Antigravity screen\n` +
-            `/close — Terminate active Antigravity session\n\n` +
-            `<b>⚙️ Settings</b>\n` +
-            `/mode — Display and change execution mode\n` +
-            `/model — Display and change LLM model\n\n` +
-            `<b>📁 Projects</b>\n` +
-            `/project — Display project list\n\n` +
-            `<b>📝 Templates</b>\n` +
-            `/template — Show templates\n` +
-            `/template_add — Register a template\n` +
-            `/template_delete — Delete a template\n\n` +
-            `<b>🔧 System</b>\n` +
-            `/status — Display overall bot status\n` +
-            `/autoaccept — Toggle auto-approve mode\n` +
-            `/cleanup [days] — Clean up inactive sessions\n` +
-            `/ping — Check latency\n\n` +
-            `<i>Text messages are sent directly to Antigravity</i>`
+            `<b>📖 Справка по командам Remoat</b>\n\n` +
+            `<b>💬 Чат и сессии:</b>\n` +
+            `• <code>/chats</code> — Список чатов проекта с переключением\n` +
+            `• <code>/new</code> — Начать новый чат в проекте\n` +
+            `• <code>/summary</code> — Краткая сводка и статус текущего чата\n` +
+            `• <code>/chat</code> — Информация о текущей сессии\n\n` +
+            `<b>⚡ Скиллы агента:</b>\n` +
+            `• <code>/skills</code> — Полный каталог скиллов в 1 клик для копирования\n` +
+            `• <code>/skills &lt;name&gt;</code> — Запуск скилла напрямую\n\n` +
+            `<b>🧠 Нейросети и квоты:</b>\n` +
+            `• <code>/models</code> (или <code>/quota</code>) — Выбор модели и остаток квот\n` +
+            `• <code>/mode</code> — Режим агента (Default / Full Machine / Turbo)\n\n` +
+            `<b>💻 Терминал и выполнение:</b>\n` +
+            `• <code>/sh &lt;команда&gt;</code> — Выполнение команды в папке проекта\n\n` +
+            `<b>📁 Проекты и воркспейсы:</b>\n` +
+            `• <code>/project</code> — Выбрать рабочий проект\n` +
+            `• <code>/workspaces</code> — Список открытых окон Antigravity\n` +
+            `• <code>/newproject &lt;name&gt;</code> — Создать новый проект и окно IDE\n` +
+            `• <code>/newworkspace &lt;path&gt;</code> — Открыть новое окно воркспейса\n\n` +
+            `<b>🛡️ Авто-одобрение и безопасность:</b>\n` +
+            `• <code>/autoaccept</code> — Вкл/выкл авто-одобрение действий\n` +
+            `• <code>/allow</code> / <code>/deny</code> — Ручное одобрение/отклонение\n\n` +
+            `<b>⏹️ Управление и система:</b>\n` +
+            `• <code>/screenshot</code> — Скриншот окна IDE\n` +
+            `• <code>/stop</code> — Прервать текущую генерацию\n` +
+            `• <code>/status</code> — Статус подключений и окон\n` +
+            `• <code>/ping</code> — Проверка задержки сети\n\n` +
+            `<i>💡 Отправляйте текст, голосовые сообщения или фото — они сразу поступят в Antigravity.</i>`
         );
     });
 
