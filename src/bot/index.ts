@@ -1506,13 +1506,12 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
         let execArgs: string[];
 
         if (isWin) {
-            execExecutable = 'powershell.exe';
+            execExecutable = 'cmd.exe';
             execArgs = [
-                '-NoProfile',
-                '-NonInteractive',
-                '-ExecutionPolicy', 'Bypass',
-                '-Command',
-                `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; ${cmd}`
+                '/d',
+                '/s',
+                '/c',
+                `chcp 65001 >nul && ${cmd}`
             ];
         } else {
             execExecutable = '/bin/sh';
