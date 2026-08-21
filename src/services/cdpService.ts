@@ -528,9 +528,8 @@ export class CdpService extends EventEmitter {
             try {
                 const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
                 pages.push(...list);
-                // Prioritize recording ports that contain workbench pages
-                const hasWorkbench = list.some((t: any) => t.url?.includes('workbench'));
-                if (hasWorkbench && respondingPort === null) {
+                const hasPage = list.some((t: any) => t.type === 'page' && t.webSocketDebuggerUrl);
+                if (hasPage && respondingPort === null) {
                     respondingPort = port;
                 }
             } catch {
@@ -539,8 +538,7 @@ export class CdpService extends EventEmitter {
         }
 
         if (respondingPort === null && pages.length > 0) {
-            // No workbench found but ports responded
-            respondingPort = this.ports[0]; // logging purposes
+            respondingPort = this.ports[0];
         }
 
         if (respondingPort === null) {
@@ -554,8 +552,7 @@ export class CdpService extends EventEmitter {
                 t.type === 'page' &&
                 t.webSocketDebuggerUrl &&
                 !t.title?.includes('Launchpad') &&
-                !t.url?.includes('workbench-jetski-agent') &&
-                t.url?.includes('workbench'),
+                !t.url?.includes('workbench-jetski-agent'),
         );
 
         logger.debug(`[CdpService] Searching for workspace "${projectName}" (port=${respondingPort})... ${workbenchPages.length} workbench pages:`);
@@ -563,8 +560,17 @@ export class CdpService extends EventEmitter {
             logger.debug(`  - title="${p.title}" url=${p.url}`);
         }
 
+        if (workbenchPages.length === 0) {
+            return this.launchAndConnectWorkspace(workspacePath, projectName);
+        }
+
+        // Single page open: connect directly
+        if (workbenchPages.length === 1) {
+            return this.connectToPage(workbenchPages[0], projectName);
+        }
+
         // 1. Title match (fast path)
-        const titleMatch = workbenchPages.find((t: any) => t.title?.includes(projectName));
+        const titleMatch = workbenchPages.find((t: any) => t.title?.toLowerCase().includes(projectName.toLowerCase()));
         if (titleMatch) {
             return this.connectToPage(titleMatch, projectName);
         }
@@ -576,8 +582,9 @@ export class CdpService extends EventEmitter {
             return true;
         }
 
-        // 3. If not found by probe either, launch a new window
-        return this.launchAndConnectWorkspace(workspacePath, projectName);
+        // 3. Fallback: connect to the first available workbench page
+        logger.debug(`[CdpService] Multi-page probe did not match exactly, falling back to first available page`);
+        return this.connectToPage(workbenchPages[0], projectName);
     }
 
     /**
@@ -813,8 +820,7 @@ export class CdpService extends EventEmitter {
                     t.type === 'page' &&
                     t.webSocketDebuggerUrl &&
                     !t.title?.includes('Launchpad') &&
-                    !t.url?.includes('workbench-jetski-agent') &&
-                    t.url?.includes('workbench'),
+                    !t.url?.includes('workbench-jetski-agent'),
             );
 
             // Title match
