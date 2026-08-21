@@ -43,7 +43,6 @@ import {
 import {
     resolveWorkspaceAndCdp as resolveWorkspaceAndCdpImpl,
     channelKeyFromChannel,
-    isGeneralTopic,
     ResolveOutcome,
 } from '../services/workspaceResolver';
 import { classifyAssistantSegments, extractAssistantSegmentsPayloadScript } from '../services/assistantDomExtractor';
@@ -65,7 +64,11 @@ import { sendAutoAcceptUI, AUTOACCEPT_BTN_ON, AUTOACCEPT_BTN_OFF, AUTOACCEPT_BTN
 import { handleScreenshot } from '../ui/screenshotUi';
 import { buildProjectListUI, PROJECT_SELECT_ID, PROJECT_PAGE_PREFIX, parseProjectPageId } from '../ui/projectListUi';
 import { buildSessionPickerUI, buildChatsListUI, SESSION_SELECT_ID, isSessionSelectId } from '../ui/sessionPickerUi';
-import { buildSkillsUI, buildSkillDetailUI, sendSkillsUI, AVAILABLE_SKILLS } from '../ui/skillsUi';
+import { buildSkillsText, sendSkillsUI } from '../ui/skillsUi';
+import { scanInstalledSkills } from '../services/skillsScanner';
+import { exec as execCommand } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
     PLAN_VIEW_BTN, PLAN_PROCEED_BTN, PLAN_EDIT_BTN, PLAN_REFRESH_BTN, PLAN_PAGE_PREFIX,
     buildPlanNotificationUI, buildPlanContentUI, paginatePlanContent,
@@ -546,22 +549,6 @@ async function sendPromptToAntigravity(
                 await detector.resetBaseline().catch((err: Error) =>
                     logger.error('[sendPrompt] PlanningDetector baseline reset failed:', err),
                 );
-            }
-        }
-
-        // Pre-flight session switch check: ensure IDE has the correct chat active for this topic/channel
-        if (options?.chatSessionRepo && options?.chatSessionService) {
-            const chKey = channelKey(channel);
-            const session = options.chatSessionRepo.findByChannelId(chKey);
-            if (session?.displayName) {
-                try {
-                    const switchRes = await options.chatSessionService.ensureSessionActive(cdp, session.displayName);
-                    if (switchRes.switched) {
-                        logger.info(`[sendPrompt] Auto-switched IDE session to "${session.displayName}" for channel ${chKey}`);
-                    }
-                } catch (err) {
-                    logger.warn(`[sendPrompt] Pre-flight ensureSessionActive warning:`, err);
-                }
             }
         }
 
@@ -1115,13 +1102,13 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         );
     });
 
-    // /model command
-    bot.command('model', async (ctx) => {
+    // /models, /model, /quota unified command
+    bot.command(['models', 'model', 'quota'], async (ctx) => {
         const ch = getChannel(ctx);
         const resolved = await resolveWorkspaceAndCdp(ch);
         const getCdp = (): CdpService | null => (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
         const modelName = ctx.match?.trim();
-        if (modelName) {
+        if (modelName && !['page', 'refresh'].includes(modelName.toLowerCase())) {
             const cdp = getCdp();
             if (!cdp) { await ctx.reply('Not connected to CDP. Send a message first to connect.'); return; }
             const res = await cdp.setUiModel(modelName);
@@ -1131,6 +1118,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             await sendModelsUI(
                 async (text, keyboard) => { await replyHtml(ctx, text, keyboard); },
                 { getCurrentCdp: getCdp, fetchQuota: async () => bridge.quota.fetchQuota() },
+                0,
             );
         }
     });
@@ -1238,13 +1226,10 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
     // /screenshot command
     bot.command('screenshot', async (ctx) => {
-        const ch = getChannel(ctx);
-        const resolved = await resolveWorkspaceAndCdp(ch);
-        const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
         await handleScreenshot(
             async (input, caption) => { await ctx.replyWithPhoto(input, { caption }); },
             async (text) => { await ctx.reply(text); },
-            cdp,
+            getCurrentCdp(bridge),
         );
     });
 
@@ -1439,23 +1424,28 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         });
     });
 
-    // /skills, /skill commands
+    // /skills, /skill commands (Dynamic scanner, tap-to-copy format)
     bot.command(['skills', 'skill'], async (ctx) => {
+        const ch = getChannel(ctx);
+        const resolved = await resolveWorkspaceAndCdp(ch);
+        const session = chatSessionRepo.findByChannelId(channelKey(ch));
+        const workspacePath = session?.workspacePath || (resolved.ok ? resolved.projectName : undefined);
+        const fullWsPath = workspacePath ? workspaceService.getWorkspacePath(workspacePath) : undefined;
+
         const arg = (ctx.match || '').trim();
         if (arg) {
             const parts = arg.split(/\s+/);
             const skillName = parts[0].toLowerCase();
             const customPrompt = parts.slice(1).join(' ');
-            const foundSkill = AVAILABLE_SKILLS.find(s => s.name === skillName || s.name.startsWith(skillName));
+            const allSkills = scanInstalledSkills(fullWsPath);
+            const foundSkill = allSkills.find(s => s.name.toLowerCase() === skillName || s.name.toLowerCase().startsWith(skillName));
             if (foundSkill) {
-                const ch = getChannel(ctx);
-                const resolved = await resolveWorkspaceAndCdp(ch);
                 const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
                 if (!cdp) {
                     await ctx.reply('⚠️ Not connected to Antigravity.');
                     return;
                 }
-                const prompt = customPrompt ? `${foundSkill.prompt}\n\nДополнительные указания: ${customPrompt}` : foundSkill.prompt;
+                const prompt = customPrompt ? `/${foundSkill.name} ${customPrompt}` : `/${foundSkill.name}`;
                 await promptDispatcher.send({
                     channel: ch,
                     prompt,
@@ -1466,7 +1456,145 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 return;
             }
         }
-        await sendSkillsUI(async (text, keyboard) => { await replyHtml(ctx, text, keyboard); }, 0);
+        await sendSkillsUI(async (text) => { await replyHtml(ctx, text); }, fullWsPath);
+    });
+
+    // /sh, /exec, /cmd, /terminal, /bash command — execute host shell commands
+    bot.command(['sh', 'exec', 'cmd', 'terminal', 'bash'], async (ctx) => {
+        const cmd = (ctx.match || '').trim();
+        if (!cmd) {
+            await replyHtml(ctx,
+                `💻 <b>Terminal Execution</b>\n\n` +
+                `<b>Использование:</b> <code>/sh &lt;команда&gt;</code>\n` +
+                `<b>Примеры:</b>\n` +
+                `• <code>/sh dir</code>\n` +
+                `• <code>/sh git status</code>\n` +
+                `• <code>/sh npm test</code>\n` +
+                `• <code>/sh mkdir new_folder</code>`
+            );
+            return;
+        }
+
+        const ch = getChannel(ctx);
+        const resolved = await resolveWorkspaceAndCdp(ch);
+        const session = chatSessionRepo.findByChannelId(channelKey(ch));
+        const binding = workspaceBindingRepo.findByChannelId(channelKey(ch));
+        const workspaceName = session?.workspacePath ?? binding?.workspacePath ?? (resolved.ok ? resolved.projectName : null);
+        const cwd = workspaceName ? workspaceService.getWorkspacePath(workspaceName) : config.workspaceBaseDir;
+
+        const startMsg = await ctx.reply(`⏳ Executing: ${cmd}…`);
+
+        execCommand(cmd, { cwd, timeout: 30000, maxBuffer: 1024 * 1024 * 5 }, async (error, stdout, stderr) => {
+            const rawOut = (stdout || '') + (stderr ? (stdout ? '\n' : '') + stderr : '');
+            // Strip ANSI color codes
+            const cleanOut = rawOut.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '').trim();
+
+            const statusIcon = error ? '❌' : '✅';
+            const exitCode = error ? (error.code ?? 1) : 0;
+            const header = `${statusIcon} <b>Command Finished (exit ${exitCode})</b>\n📂 <code>${escapeHtml(cwd)}</code>\n\n`;
+
+            if (!cleanOut) {
+                try {
+                    await bot.api.editMessageText(ctx.chat!.id, startMsg.message_id, `${header}<i>(No output produced)</i>`, { parse_mode: 'HTML' });
+                } catch {
+                    await replyHtml(ctx, `${header}<i>(No output produced)</i>`);
+                }
+                return;
+            }
+
+            const maxLen = 3500;
+            const displayOut = cleanOut.length > maxLen
+                ? cleanOut.slice(0, maxLen) + `\n\n… [Output truncated, ${cleanOut.length - maxLen} chars omitted]`
+                : cleanOut;
+
+            try {
+                await bot.api.editMessageText(ctx.chat!.id, startMsg.message_id, `${header}<pre><code>${escapeHtml(displayOut)}</code></pre>`, { parse_mode: 'HTML' });
+            } catch {
+                await replyHtml(ctx, `${header}<pre><code>${escapeHtml(displayOut)}</code></pre>`);
+            }
+        });
+    });
+
+    // /newproject, /new_project command — create new project folder and workspace
+    bot.command(['newproject', 'new_project'], async (ctx) => {
+        const projectName = (ctx.match || '').trim();
+        if (!projectName) {
+            await replyHtml(ctx,
+                `📁 <b>New Project Creation</b>\n\n` +
+                `<b>Использование:</b> <code>/newproject &lt;имя_проекта&gt;</code>\n` +
+                `<b>Пример:</b> <code>/newproject my_new_app</code>`
+            );
+            return;
+        }
+
+        if (!/^[a-zA-Z0-9_\-\.]+$/.test(projectName)) {
+            await ctx.reply('❌ Имя проекта может содержать только буквы, цифры, дефисы и подчеркивания.');
+            return;
+        }
+
+        const projectPath = path.join(config.workspaceBaseDir, projectName);
+        try {
+            if (!fs.existsSync(projectPath)) {
+                fs.mkdirSync(projectPath, { recursive: true });
+                const readmePath = path.join(projectPath, 'README.md');
+                fs.writeFileSync(readmePath, `# ${projectName}\n\nCreated via Antigravity Remoat Telegram Remote.\n`);
+            }
+
+            const ch = getChannel(ctx);
+            const key = channelKey(ch);
+            workspaceBindingRepo.upsert({ channelId: key, workspacePath: projectName, guildId: String(ch.chatId) });
+
+            await replyHtml(ctx,
+                `🚀 <b>Project Created & Bound!</b>\n\n` +
+                `<b>Project:</b> <code>${escapeHtml(projectName)}</code>\n` +
+                `<b>Path:</b> <code>${escapeHtml(projectPath)}</code>\n\n` +
+                `Connecting Antigravity IDE workspace…`
+            );
+
+            const cdp = await bridge.pool.getOrConnect(projectPath);
+            await chatSessionService.startNewChat(cdp);
+            await replyHtml(ctx, `✅ <b>Workspace Ready!</b> Send your prompt now to start coding.`);
+        } catch (e: any) {
+            logger.error('[newproject] failed:', e);
+            await ctx.reply(`❌ Failed to create project: ${e.message}`);
+        }
+    });
+
+    // /newworkspace, /new_workspace command — launch/open new workspace window
+    bot.command(['newworkspace', 'new_workspace'], async (ctx) => {
+        const target = (ctx.match || '').trim();
+        if (!target) {
+            await replyHtml(ctx,
+                `🪟 <b>New Workspace Window</b>\n\n` +
+                `<b>Использование:</b> <code>/newworkspace &lt;имя_папки_или_путь&gt;</code>\n` +
+                `<b>Пример:</b> <code>/newworkspace my_project</code>`
+            );
+            return;
+        }
+
+        const targetPath = path.isAbsolute(target) ? target : path.join(config.workspaceBaseDir, target);
+        try {
+            if (!fs.existsSync(targetPath)) {
+                fs.mkdirSync(targetPath, { recursive: true });
+            }
+
+            const projectName = path.basename(targetPath);
+            const ch = getChannel(ctx);
+            const key = channelKey(ch);
+            workspaceBindingRepo.upsert({ channelId: key, workspacePath: projectName, guildId: String(ch.chatId) });
+
+            await replyHtml(ctx,
+                `🪟 <b>Opening Workspace Window…</b>\n\n` +
+                `<b>Path:</b> <code>${escapeHtml(targetPath)}</code>`
+            );
+
+            const cdp = await bridge.pool.getOrConnect(targetPath);
+            await chatSessionService.startNewChat(cdp);
+            await replyHtml(ctx, `✅ <b>Workspace Window Connected!</b> Send your prompt now.`);
+        } catch (e: any) {
+            logger.error('[newworkspace] failed:', e);
+            await ctx.reply(`❌ Failed to open workspace: ${e.message}`);
+        }
     });
 
     // /ping command
@@ -1512,20 +1640,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         if (data.startsWith('mode_select:')) {
             const selectedMode = data.replace('mode_select:', '');
             modeService.setMode(selectedMode);
-            if (selectedMode === 'turbo') {
-                bridge.autoAccept.handle('on');
-            }
-            const resolved = await resolveWorkspaceAndCdp(ch);
-            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
-            if (cdp) {
-                try {
-                    const res = await cdp.setSecurityPreset(selectedMode);
-                    if (!res.ok) logger.warn(`[Mode] Security Preset switch failed: ${res.error}`);
-                } catch (err: any) {
-                    logger.warn(`[Mode] setSecurityPreset error: ${err.message}`);
-                }
-            }
-            const { text, keyboard } = await buildModeUI(modeService, { getCurrentCdp: () => cdp });
+            const cdp = getCurrentCdp(bridge);
+            if (cdp) { const res = await cdp.setUiMode(selectedMode); if (!res.ok) logger.warn(`[Mode] UI switch failed: ${res.error}`); }
+            const { text, keyboard } = await buildModeUI(modeService, { getCurrentCdp: () => getCurrentCdp(bridge) });
             try {
                 await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard });
             } catch (e) { logger.debug('[modeSelect] editMessageText failed (expected if unchanged):', e); }
@@ -1533,38 +1650,63 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             return;
         }
 
+        // Models list pagination
+        if (data.startsWith('models_page:')) {
+            const page = parseInt(data.replace('models_page:', ''), 10) || 0;
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+            if (cdp) {
+                const payload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota(), page);
+                if (payload) {
+                    try {
+                        await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
+                    } catch {}
+                }
+            }
+            await ctx.answerCallbackQuery();
+            return;
+        }
+
+        // Models refresh with page preservation
+        if (data.startsWith('models_refresh_btn')) {
+            const parts = data.split(':');
+            const page = parts.length > 1 ? (parseInt(parts[1], 10) || 0) : 0;
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
+            if (!cdp) { await ctx.answerCallbackQuery({ text: 'Not connected.' }); return; }
+            const payload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota(), page);
+            if (payload) {
+                try {
+                    await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
+                } catch {}
+            }
+            await ctx.answerCallbackQuery({ text: 'Quota refreshed' });
+            return;
+        }
+
         // Exhausted model button — show alert toast
         if (data.startsWith('model_exhausted_')) {
-            const modelName = data.replace('model_exhausted_', '');
+            const key = data.replace('model_exhausted_', '');
+            const modelName = global.modelSwitchMap?.get(key) || key;
             await ctx.answerCallbackQuery({ text: `⛔ ${modelName} is exhausted. Wait for quota reset or pick another model.`, show_alert: true });
             return;
         }
 
         // Model selection
         if (data.startsWith('model_btn_')) {
-            const modelName = data.replace('model_btn_', '');
+            const key = data.replace('model_btn_', '');
+            const modelName = global.modelSwitchMap?.get(key) || key;
             const resolved = await resolveWorkspaceAndCdp(ch);
             const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
             if (!cdp) { await ctx.answerCallbackQuery({ text: 'Not connected to CDP.' }); return; }
             const res = await cdp.setUiModel(modelName);
             if (res.ok) {
-                const payload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota());
+                const payload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota(), 0);
                 if (payload) try { await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard }); } catch (e) { logger.debug('[editMsg] Telegram edit failed (expected for unmodified):', e); }
                 await ctx.answerCallbackQuery({ text: `Model: ${res.model}` });
             } else {
                 await ctx.answerCallbackQuery({ text: res.error || 'Failed to change model.' });
             }
-            return;
-        }
-
-        // Model refresh
-        if (data === 'model_refresh_btn') {
-            const resolved = await resolveWorkspaceAndCdp(ch);
-            const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
-            if (!cdp) { await ctx.answerCallbackQuery({ text: 'Not connected.' }); return; }
-            const payload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota());
-            if (payload) try { await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard }); } catch (e) { logger.debug('[editMsg] Telegram edit failed (expected for unmodified):', e); }
-            await ctx.answerCallbackQuery({ text: 'Refreshed' });
             return;
         }
 
@@ -1653,43 +1795,25 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             return;
         }
 
-        // Paginate skills list
-        if (data.startsWith('skills_page:')) {
-            const page = parseInt(data.replace('skills_page:', ''), 10) || 0;
-            const payload = buildSkillsUI(page);
-            try {
-                await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
-            } catch { }
-            await ctx.answerCallbackQuery();
-            return;
-        }
-
-        // View skill details
-        if (data.startsWith('skill_view:')) {
-            const skillName = data.replace('skill_view:', '');
-            const payload = buildSkillDetailUI(skillName);
-            try {
-                await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
-            } catch { }
-            await ctx.answerCallbackQuery();
-            return;
-        }
-
-        // Run skill directly
+        // Run skill directly from callback
         if (data.startsWith('skill_run:')) {
-            const skillName = data.replace('skill_run:', '');
-            const foundSkill = AVAILABLE_SKILLS.find(s => s.name === skillName);
+            const skillName = data.replace('skill_run:', '').toLowerCase();
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const session = chatSessionRepo.findByChannelId(channelKey(ch));
+            const workspacePath = session?.workspacePath || (resolved.ok ? resolved.projectName : undefined);
+            const fullWsPath = workspacePath ? workspaceService.getWorkspacePath(workspacePath) : undefined;
+            const allSkills = scanInstalledSkills(fullWsPath);
+            const foundSkill = allSkills.find(s => s.name.toLowerCase() === skillName || s.name.toLowerCase().startsWith(skillName));
             if (foundSkill) {
-                const resolved = await resolveWorkspaceAndCdp(ch);
                 const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
                 if (!cdp) {
                     await ctx.answerCallbackQuery({ text: 'Not connected to CDP.' });
                     return;
                 }
-                await ctx.answerCallbackQuery({ text: `Running ${foundSkill.label}...` });
+                await ctx.answerCallbackQuery({ text: `Running /${foundSkill.name}...` });
                 await promptDispatcher.send({
                     channel: ch,
-                    prompt: foundSkill.prompt,
+                    prompt: `/${foundSkill.name}`,
                     cdp,
                     inboundImages: [],
                     options: { chatSessionService, chatSessionRepo, topicManager, titleGenerator }
@@ -2186,13 +2310,10 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             }
 
             if (parsed.commandName === 'screenshot') {
-                const ch = getChannel(ctx);
-                const resolved = await resolveWorkspaceAndCdp(ch);
-                const cdp = (resolved.ok ? resolved.cdp : null) ?? getCurrentCdp(bridge);
                 await handleScreenshot(
                     async (input, caption) => { await ctx.replyWithPhoto(input, { caption }); },
                     async (text) => { await ctx.reply(text); },
-                    cdp,
+                    getCurrentCdp(bridge),
                 );
                 return;
             }
@@ -2273,29 +2394,16 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         }
         // ── End concurrency gate ────────────────────────────────────────────
 
-        let session = chatSessionRepo.findByChannelId(key);
-        if (!session && ch.threadId && !isGeneralTopic(ch)) {
-            // New sub-topic created in Supergroup -> allocate chat session and initialize
-            const nextNum = chatSessionRepo.getNextSessionNumber(String(ch.chatId));
-            session = chatSessionRepo.create({
-                channelId: key,
-                categoryId: String(ch.chatId),
-                workspacePath: resolved.workspacePath,
-                sessionNumber: nextNum,
-                guildId: String(ch.chatId),
-            });
-            try {
-                await chatSessionService.startNewChat(resolved.cdp);
-            } catch (e) {
-                logger.debug('[startNewChat] Failed for new topic:', e);
-            }
-        }
-
+        const session = chatSessionRepo.findByChannelId(key);
         if (session?.displayName) {
             registerApprovalSessionChannel(bridge, resolved.projectName, session.displayName, ch);
-            const activationResult = await chatSessionService.ensureSessionActive(resolved.cdp, session.displayName);
+        }
+
+        if (session?.isRenamed && session.displayName) {
+            const activationResult = await chatSessionService.activateSessionByTitle(resolved.cdp, session.displayName);
             if (!activationResult.ok) {
-                logger.warn(`[Routing] Could not switch to session (${session.displayName}): ${activationResult.error}`);
+                await ctx.reply(`⚠️ Could not route to session (${session.displayName}).`);
+                return;
             }
         } else if (session && !session.isRenamed) {
             try { await chatSessionService.startNewChat(resolved.cdp); }
@@ -2503,17 +2611,19 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 const ruCommands = [
                     { command: 'chats', description: '💬 Список чатов проекта (с кнопками)' },
                     { command: 'new', description: '➕ Начать новый чат в проекте' },
-                    { command: 'skills', description: '🚀 Каталог скиллов агента' },
-                    { command: 'summary', description: '📋 Краткая сводка по чату' },
-                    { command: 'quota', description: '📊 Квоты, лимиты и остаток моделей' },
-                    { command: 'models', description: '🧠 Выбрать нейросеть (LLM)' },
+                    { command: 'skills', description: '⚡ Каталог скиллов (в 1 клик для копирования)' },
+                    { command: 'models', description: '🧠 Выбрать нейросеть и проверить квоты' },
+                    { command: 'quota', description: '📊 Квоты и лимиты моделей' },
+                    { command: 'mode', description: '⚙️ Режим агента (Default / Full Machine / Turbo)' },
+                    { command: 'sh', description: '💻 Выполнить команду терминала' },
+                    { command: 'newproject', description: '📁 Создать новый проект и окно' },
+                    { command: 'newworkspace', description: '🪟 Открыть новое окно воркспейса' },
                     { command: 'workspaces', description: '🪟 Переключить окно Antigravity' },
                     { command: 'project', description: '📁 Сменить рабочий проект' },
-                    { command: 'mode', description: '⚙️ Режим агента (Fast / Planning)' },
-                    { command: 'screenshot', description: '📸 Сделать скриншот окна IDE' },
+                    { command: 'summary', description: '📋 Краткая сводка по чату' },
+                    { command: 'autoaccept', description: '🛡️ Авто-одобрение действий' },
+                    { command: 'screenshot', description: '📸 Скриншот окна IDE' },
                     { command: 'stop', description: '🛑 Прервать текущую генерацию' },
-                    { command: 'autoaccept', description: '⚡ Авто-одобрение действий' },
-                    { command: 'chat', description: 'ℹ️ Инфо о текущей сессии' },
                     { command: 'status', description: '🔍 Статус подключений и окон' },
                     { command: 'ping', description: '🏓 Проверить задержку сети' },
                     { command: 'help', description: '❓ Полная справка' },

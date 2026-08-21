@@ -19,10 +19,9 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "jest",
-    "test:unit": "jest tests/commands tests/services tests/database tests/middleware tests/ui tests/utils",
-    "test:integration": "jest tests/integration tests/e2e",
-    "test:coverage": "jest --coverage",
+    "test": "npm run test:unit",
+    "test:unit": "jest",
+    "test:integration": "jest tests/e2e.bot.test.ts",
     "test:watch": "jest --watch",
     "prebuild": "node -e \"try{require('fs').unlinkSync('tsconfig.tsbuildinfo')}catch(e){}\"",
     "build": "tsc",

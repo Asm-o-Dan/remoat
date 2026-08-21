@@ -25,23 +25,25 @@ export async function buildModeUI(
     if (deps?.getCurrentCdp) {
         const cdp = deps.getCurrentCdp();
         if (cdp) {
-            const liveMode = await cdp.getCurrentMode();
-            if (liveMode) modeService.setMode(liveMode);
+            try {
+                const liveMode = await cdp.getCurrentMode();
+                if (liveMode) modeService.setMode(liveMode);
+            } catch {}
         }
     }
 
     const currentMode = modeService.getCurrentMode();
 
     const modeLines = AVAILABLE_MODES.map(m => {
-        const icon = m === currentMode ? '✅' : '⬜';
-        return `${icon} <b>${escapeHtml(MODE_DISPLAY_NAMES[m] || m)}</b> — ${escapeHtml(MODE_DESCRIPTIONS[m] || '')}`;
-    }).join('\n');
+        const icon = m === currentMode ? '👉 ' : '• ';
+        const mark = m === currentMode ? ' <b>(Active)</b>' : '';
+        return `${icon}<b>${escapeHtml(MODE_DISPLAY_NAMES[m] || m)}</b>${mark}\n   └ <i>${escapeHtml(MODE_DESCRIPTIONS[m] || '')}</i>`;
+    }).join('\n\n');
 
     const text =
-        `<b>Mode Management</b>\n\n` +
-        `<b>Current Mode:</b> ${escapeHtml(MODE_DISPLAY_NAMES[currentMode] || currentMode)}\n` +
-        `${escapeHtml(MODE_DESCRIPTIONS[currentMode] || '')}\n\n` +
-        `<b>Available Modes (${AVAILABLE_MODES.length})</b>\n` +
+        `⚙️ <b>Execution Mode Management</b>\n\n` +
+        `<b>Active Mode:</b> ${escapeHtml(MODE_DISPLAY_NAMES[currentMode] || currentMode)}\n\n` +
+        `<b>Available Project Modes (${AVAILABLE_MODES.length}):</b>\n\n` +
         modeLines;
 
     const keyboard = new InlineKeyboard();

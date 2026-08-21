@@ -1,5 +1,4 @@
 import { InlineKeyboard } from 'grammy';
-
 import { CdpService } from '../services/cdpService';
 import { escapeHtml } from '../utils/telegramFormatter';
 
@@ -13,9 +12,22 @@ export interface ModelsUiPayload {
     keyboard: InlineKeyboard;
 }
 
+export const MODEL_PAGE_SIZE = 5;
+
+declare global {
+    var modelSwitchMap: Map<string, string> | undefined;
+}
+
+global.modelSwitchMap = global.modelSwitchMap || new Map();
+
+/**
+ * Builds a unified, compact Model & Quota switcher UI with inline pagination.
+ */
 export async function buildModelsUI(
     cdp: CdpService,
     fetchQuota: () => Promise<any[]>,
+    page = 0,
+    pageSize = MODEL_PAGE_SIZE,
 ): Promise<ModelsUiPayload | null> {
     const models = await cdp.getUiModels();
     const currentModel = await cdp.getCurrentModel();
@@ -23,79 +35,95 @@ export async function buildModelsUI(
 
     if (models.length === 0) return null;
 
-    function formatQuota(mName: string, current: boolean) {
-        if (!mName) return `${current ? '✅' : '⬜'} Unknown`;
+    const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '');
 
-        const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '');
+    function getQuotaForModel(mName: string) {
+        if (!mName) return null;
         const nName = normalize(mName);
-        const q = quotaData.find(q => {
+        return quotaData.find(q => {
             const nLabel = normalize(q.label || '');
             const nModel = normalize(q.model || '');
-            return nLabel === nName || nModel === nName
-                || nName.includes(nLabel) || nLabel.includes(nName)
-                || (nModel && (nName.includes(nModel) || nModel.includes(nName)));
+            const matchLabel = Boolean(nLabel && (nLabel === nName || nName.includes(nLabel) || nLabel.includes(nName)));
+            const matchModel = Boolean(nModel && (nModel === nName || nName.includes(nModel) || nModel.includes(nName)));
+            return matchLabel || matchModel;
         });
-        if (!q || !q.quotaInfo) return `${current ? '✅' : '⬜'} ${mName}`;
+    }
 
-        const rem = q.quotaInfo.remainingFraction;
-        const resetTime = q.quotaInfo.resetTime ? new Date(q.quotaInfo.resetTime) : null;
-        const diffMs = resetTime ? resetTime.getTime() - Date.now() : 0;
-        let timeStr = 'Ready';
-        if (diffMs > 0) {
-            const mins = Math.ceil(diffMs / 60000);
-            if (mins < 60) timeStr = `${mins}m`;
-            else timeStr = `${Math.floor(mins / 60)}h ${mins % 60}m`;
-        }
+    const totalPages = Math.max(1, Math.ceil(models.length / pageSize));
+    const currentPage = Math.max(0, Math.min(page, totalPages - 1));
+    const startIndex = currentPage * pageSize;
+    const pageModels = models.slice(startIndex, startIndex + pageSize);
+
+    // Minimal, clean text header
+    const currentDisplayName = currentModel || 'None';
+    let text = `🧠 <b>Model & Quota Management</b>\n\n`;
+    text += `<b>Current Model:</b> ⚡ <b>${escapeHtml(currentDisplayName)}</b>\n`;
+    text += `<i>Page ${currentPage + 1} of ${totalPages} (${models.length} available)</i>`;
+
+    const keyboard = new InlineKeyboard();
+
+    for (let i = 0; i < pageModels.length; i++) {
+        const mName = pageModels[i];
+        const isCurrent = mName === currentModel;
+        const q = getQuotaForModel(mName);
+        const rem = q?.quotaInfo?.remainingFraction;
+
+        let quotaLabel = '';
+        let icon = '⚪';
+        let isExhausted = false;
 
         if (rem !== undefined && rem !== null && !isNaN(rem)) {
             const percent = Math.round(rem * 100);
-            let icon = '🟢';
-            if (percent <= 0) icon = '⛔';
-            else if (percent <= 20) icon = '🔴';
-            else if (percent <= 50) icon = '🟡';
-            const quotaStr = percent <= 0 ? 'Exhausted' : `${percent}%`;
-            return `${current ? '✅' : '⬜'} ${mName} ${icon} ${quotaStr} (⏱️ ${timeStr})`;
+            if (percent <= 0) {
+                icon = '⛔';
+                quotaLabel = ' (0%)';
+                isExhausted = true;
+            } else if (percent <= 20) {
+                icon = '🔴';
+                quotaLabel = ` (${percent}%)`;
+            } else if (percent <= 50) {
+                icon = '🟡';
+                quotaLabel = ` (${percent}%)`;
+            } else {
+                icon = '🟢';
+                quotaLabel = ` (${percent}%)`;
+            }
         }
 
-        return `${current ? '✅' : '⬜'} ${mName} ❓ N/A (⏱️ ${timeStr})`;
+        const activePrefix = isExhausted ? '⛔ ' : (isCurrent ? '✅ ' : `${icon} `);
+        const cleanName = mName.length > 26 ? mName.slice(0, 23) + '...' : mName;
+        const buttonText = `${activePrefix}${cleanName}${quotaLabel}`;
+
+        const key = `m_${currentPage}_${i}_` + Math.random().toString(36).slice(2, 6);
+        global.modelSwitchMap?.set(key, mName);
+        if (global.modelSwitchMap && global.modelSwitchMap.size > 150) {
+            const firstKey = global.modelSwitchMap.keys().next().value;
+            if (firstKey) global.modelSwitchMap.delete(firstKey);
+        }
+
+        const callbackData = isExhausted ? `model_exhausted_${key}` : `model_btn_${key}`;
+        keyboard.text(buttonText, callbackData).row();
     }
 
-    const currentModelFormatted = currentModel ? formatQuota(currentModel, true) : 'Unknown';
+    // Pagination row
+    if (totalPages > 1) {
+        if (currentPage > 0) {
+            keyboard.text('⬅️ Prev', `models_page:${currentPage - 1}`);
+        } else {
+            keyboard.text('▪️', 'models_noop');
+        }
 
-    const text =
-        `<b>Model Management</b>\n\n` +
-        `<b>Current Model:</b>\n${escapeHtml(currentModelFormatted)}\n\n` +
-        `<b>Available Models (${models.length})</b>\n` +
-        models.map(m => escapeHtml(formatQuota(m, m === currentModel))).join('\n');
+        keyboard.text(`📄 ${currentPage + 1}/${totalPages}`, 'models_noop');
 
-    const isExhausted = (mName: string): boolean => {
-        if (!mName) return false;
-        const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '');
-        const nName = normalize(mName);
-        const q = quotaData.find(q => {
-            const nLabel = normalize(q.label || '');
-            const nModel = normalize(q.model || '');
-            return nLabel === nName || nModel === nName
-                || nName.includes(nLabel) || nLabel.includes(nName)
-                || (nModel && (nName.includes(nModel) || nModel.includes(nName)));
-        });
-        if (!q?.quotaInfo) return false;
-        const rem = q.quotaInfo.remainingFraction;
-        return typeof rem === 'number' && !isNaN(rem) && rem <= 0;
-    };
-
-    const keyboard = new InlineKeyboard();
-    const MAX_BUTTONS = 24;
-    for (const mName of models.slice(0, MAX_BUTTONS)) {
-        const exhausted = isExhausted(mName);
-        const safeName = mName.length > 40 ? mName.substring(0, 37) + '...' : mName;
-        const label = exhausted ? `⛔ ${safeName}` : safeName;
-        const maxNameLen = 64 - 'model_exhausted_'.length;
-        const cbName = mName.length > maxNameLen ? mName.substring(0, maxNameLen) : mName;
-        const cbData = exhausted ? `model_exhausted_${cbName}` : `model_btn_${cbName}`;
-        keyboard.text(label, cbData).row();
+        if (currentPage < totalPages - 1) {
+            keyboard.text('Next ➡️', `models_page:${currentPage + 1}`);
+        } else {
+            keyboard.text('▪️', 'models_noop');
+        }
+        keyboard.row();
     }
-    keyboard.text('🔄 Refresh', 'model_refresh_btn').row();
+
+    keyboard.text('🔄 Refresh Quota', `models_refresh_btn:${currentPage}`).row();
 
     return { text, keyboard };
 }
@@ -103,6 +131,7 @@ export async function buildModelsUI(
 export async function sendModelsUI(
     sendFn: (text: string, keyboard: InlineKeyboard) => Promise<void>,
     deps: ModelsUiDeps,
+    page = 0,
 ): Promise<void> {
     const cdp = deps.getCurrentCdp();
     if (!cdp) {
@@ -110,7 +139,7 @@ export async function sendModelsUI(
         return;
     }
 
-    const payload = await buildModelsUI(cdp, deps.fetchQuota);
+    const payload = await buildModelsUI(cdp, deps.fetchQuota, page);
     if (!payload) {
         await sendFn('Failed to retrieve model list from Antigravity.', new InlineKeyboard());
         return;

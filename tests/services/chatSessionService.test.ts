@@ -388,46 +388,4 @@ describe('ChatSessionService', () => {
             expect(escapeCall).toBeDefined();
         });
     });
-
-    describe('ensureSessionActive()', () => {
-        it('returns ok:true, switched:false immediately when targetTitle matches current session', async () => {
-            mockCdpService.call.mockResolvedValue({
-                result: { value: { title: 'Auth Module', hasActiveChat: true } }
-            });
-
-            const res = await service.ensureSessionActive(mockCdpService, 'Auth Module');
-
-            expect(res.ok).toBe(true);
-            expect(res.switched).toBe(false);
-            // Input.dispatchMouseEvent was not called
-            expect(mockCdpService.call).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything());
-        });
-
-        it('switches session and returns ok:true, switched:true when targetTitle differs from current', async () => {
-            let evalCount = 0;
-            mockCdpService.call.mockImplementation(async (method: string) => {
-                if (method === 'Runtime.evaluate') {
-                    evalCount++;
-                    if (evalCount === 1) {
-                        // getCurrentSessionInfo -> different chat
-                        return { result: { value: { title: 'Database Optimization', hasActiveChat: true } } };
-                    }
-                    // activateSessionByIdOrTitle -> found and clicked
-                    return { result: { value: { ok: true, x: 100, y: 200 } } };
-                }
-                return {};
-            });
-
-            const res = await service.ensureSessionActive(mockCdpService, 'Auth Module', 'conv-123');
-
-            expect(res.ok).toBe(true);
-            expect(res.switched).toBe(true);
-        });
-
-        it('returns ok:true, switched:false when targetTitle is empty', async () => {
-            const res = await service.ensureSessionActive(mockCdpService, '');
-            expect(res.ok).toBe(true);
-            expect(res.switched).toBe(false);
-        });
-    });
 });

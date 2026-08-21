@@ -30,16 +30,34 @@ export interface ApprovalDetectorOptions {
  * Detects allow/deny button pairs and extracts descriptions with fallbacks.
  */
 const DETECT_APPROVAL_SCRIPT = `(() => {
-    const ALLOW_ONCE_PATTERNS = ['allow once', 'allow one time', '今回のみ許可', '1回のみ許可', '一度許可'];
+    const ALLOW_ONCE_PATTERNS = [
+        'allow once', 'allow one time', 'разрешить один раз', 'выполнить один раз',
+        'proceed', 'continue', 'продолжить', 'run once', 'run this', 'execute once',
+        '今回のみ許可', '1回のみ許可', '一度許可'
+    ];
     const ALWAYS_ALLOW_PATTERNS = [
         'allow this conversation',
         'allow this chat',
         'always allow',
+        'всегда разрешать',
+        'разрешить для этой беседы',
+        'разрешать всегда',
+        'всегда выполнять',
         '常に許可',
         'この会話を許可',
     ];
-    const ALLOW_PATTERNS = ['allow', 'permit', 'run', 'execute', '許可', '承認', '確認', '実行'];
-    const DENY_PATTERNS = ['deny', 'reject', '拒否', 'decline', '却下'];
+    const ALLOW_PATTERNS = [
+        'allow', 'permit', 'run', 'execute', 'run command', 'accept', 'approve', 'confirm',
+        'разрешить', 'выполнить', 'запустить', 'принять', 'подтвердить', 'сохранить', 'save', 'apply', 'применить',
+        'yes', 'да', 'ok', 'хорошо', 'согласен', 'agree', 'proceed',
+        '許可', '承認', '確認', '実行'
+    ];
+    const DENY_PATTERNS = [
+        'deny', 'reject', 'cancel', 'decline', 'dismiss', 'block',
+        'отклонить', 'отмена', 'запретить', 'отменить', 'блокировать',
+        'no', 'нет',
+        '拒否', '却下'
+    ];
 
     const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
 

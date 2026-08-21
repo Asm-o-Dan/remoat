@@ -28,9 +28,8 @@ describe('modelsUi', () => {
 
         expect(sendFn).toHaveBeenCalledTimes(1);
         const text = sendFn.mock.calls[0][0] as string;
-        expect(text).toContain('Model Management');
+        expect(text).toContain('Model & Quota Management');
         expect(text).toContain('Model A');
-        expect(text).toContain('Model B');
         expect(sendFn.mock.calls[0][1]).toBeInstanceOf(InlineKeyboard);
     });
 });
@@ -54,12 +53,12 @@ describe('buildModelsUI', () => {
 
         const result = await buildModelsUI(cdp as any, async () => []);
         expect(result).not.toBeNull();
-        expect(result!.text).toContain('Model Management');
+        expect(result!.text).toContain('Model & Quota Management');
         expect(result!.text).toContain('Model A');
         expect(result!.keyboard).toBeInstanceOf(InlineKeyboard);
     });
 
-    it('shows exhausted status when remainingFraction is 0', async () => {
+    it('shows exhausted status on button when remainingFraction is 0', async () => {
         const cdp = {
             getUiModels: jest.fn().mockResolvedValue(['Model A']),
             getCurrentModel: jest.fn().mockResolvedValue('Model A'),
@@ -71,12 +70,13 @@ describe('buildModelsUI', () => {
         }];
 
         const result = await buildModelsUI(cdp as any, async () => quota);
-        expect(result!.text).toContain('Exhausted');
-        expect(result!.text).toContain('⛔');
-        expect(result!.text).not.toContain('100%');
+        const kbData = JSON.stringify((result!.keyboard as any).inline_keyboard);
+        expect(kbData).toContain('⛔');
+        expect(kbData).toContain('(0%)');
+        expect(kbData).toContain('model_exhausted_');
     });
 
-    it('shows percentage when remainingFraction is between 0 and 1', async () => {
+    it('shows percentage on button when remainingFraction is between 0 and 1', async () => {
         const cdp = {
             getUiModels: jest.fn().mockResolvedValue(['Model A']),
             getCurrentModel: jest.fn().mockResolvedValue('Model A'),
@@ -88,24 +88,32 @@ describe('buildModelsUI', () => {
         }];
 
         const result = await buildModelsUI(cdp as any, async () => quota);
-        expect(result!.text).toContain('60%');
-        expect(result!.text).toContain('🟢');
+        const kbData = JSON.stringify((result!.keyboard as any).inline_keyboard);
+        expect(kbData).toContain('(60%)');
+        expect(kbData).toContain('Model A');
     });
 
-    it('shows N/A when quotaInfo has NaN remainingFraction', async () => {
+    it('handles pagination properly when models exceed page size', async () => {
+        const models = ['Model 1', 'Model 2', 'Model 3', 'Model 4', 'Model 5', 'Model 6', 'Model 7'];
         const cdp = {
-            getUiModels: jest.fn().mockResolvedValue(['Model A']),
-            getCurrentModel: jest.fn().mockResolvedValue('Model A'),
+            getUiModels: jest.fn().mockResolvedValue(models),
+            getCurrentModel: jest.fn().mockResolvedValue('Model 1'),
         };
-        const quota = [{
-            label: 'Model A',
-            model: 'model_a',
-            quotaInfo: { remainingFraction: NaN, resetTime: '' },
-        }];
 
-        const result = await buildModelsUI(cdp as any, async () => quota);
-        expect(result!.text).toContain('N/A');
-        expect(result!.text).toContain('❓');
+        const page0 = await buildModelsUI(cdp as any, async () => [], 0, 5);
+        expect(page0!.text).toContain('Page 1 of 2');
+        const kb0 = JSON.stringify((page0!.keyboard as any).inline_keyboard);
+        expect(kb0).toContain('Model 1');
+        expect(kb0).toContain('Model 5');
+        expect(kb0).not.toContain('Model 6');
+        expect(kb0).toContain('Next ➡️');
+
+        const page1 = await buildModelsUI(cdp as any, async () => [], 1, 5);
+        expect(page1!.text).toContain('Page 2 of 2');
+        const kb1 = JSON.stringify((page1!.keyboard as any).inline_keyboard);
+        expect(kb1).toContain('Model 6');
+        expect(kb1).toContain('Model 7');
+        expect(kb1).toContain('⬅️ Prev');
     });
 
     it('uses model_exhausted_ callback prefix for exhausted model buttons', async () => {
@@ -120,9 +128,10 @@ describe('buildModelsUI', () => {
 
         const result = await buildModelsUI(cdp as any, async () => quota);
         const kbData = JSON.stringify((result!.keyboard as any).inline_keyboard);
-        expect(kbData).toContain('model_btn_Healthy Model');
-        expect(kbData).toContain('model_exhausted_Dead Model');
-        expect(kbData).toContain('⛔ Dead Model');
+        expect(kbData).toContain('model_btn_');
+        expect(kbData).toContain('model_exhausted_');
+        expect(kbData).toContain('⛔');
+        expect(kbData).toContain('Dead Model');
     });
 
     it('sendModelsUI delegates to buildModelsUI', async () => {

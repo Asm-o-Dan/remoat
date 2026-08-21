@@ -1,37 +1,47 @@
 import { t } from "../utils/i18n";
 
 /**
- * Available execution modes
- * fast: Fast response mode (for simple tasks)
- * plan: Planning mode (execute complex tasks step by step)
+ * Available execution modes for Antigravity IDE:
+ * - default: Standard balanced mode
+ * - full_machine: Full autonomous access to system tools & environment
+ * - turbo: High-speed streaming response mode
  */
-export const AVAILABLE_MODES = ['fast', 'plan'] as const;
+export const AVAILABLE_MODES = ['default', 'full_machine', 'turbo'] as const;
 
 /** Mode display name mapping */
 export const MODE_DISPLAY_NAMES: Record<string, string> = {
-    fast: '⚡ Fast',
-    plan: '📋 Plan',
+    default: '⚙️ Default',
+    full_machine: '💻 Full Machine',
+    turbo: '🚀 Turbo Mode',
 };
 
 /** Mode description mapping */
 export const MODE_DESCRIPTIONS: Record<string, string> = {
-    fast: t('Fast Mode — for simple tasks'),
-    plan: t('Plan Mode — for complex step-by-step tasks'),
+    default: t('Default — Стандартный сбалансированный режим'),
+    full_machine: t('Full Machine — Полный доступ к терминалу и инструментам разработки'),
+    turbo: t('Turbo Mode — Высокоскоростной режим быстрых ответов'),
 };
 
 /** Antigravity UI display name mapping (internal name -> UI display name) */
 export const MODE_UI_NAMES: Record<string, string> = {
-    fast: 'Fast',
-    plan: 'Planning',
+    default: 'Default',
+    full_machine: 'Full Machine',
+    turbo: 'Turbo',
 };
 
 /** Reverse mapping from UI display name -> internal name */
-export const MODE_UI_NAME_REVERSE: Record<string, string> = Object.fromEntries(
-    Object.entries(MODE_UI_NAMES).map(([k, v]) => [v.toLowerCase(), k])
-);
+export const MODE_UI_NAME_REVERSE: Record<string, string> = {
+    default: 'default',
+    'full machine': 'full_machine',
+    fullmachine: 'full_machine',
+    turbo: 'turbo',
+    fast: 'turbo',
+    plan: 'default',
+    planning: 'default',
+};
 
 /** Default execution mode */
-export const DEFAULT_MODE: Mode = 'fast';
+export const DEFAULT_MODE: Mode = 'default';
 
 /** Mode type definition */
 export type Mode = typeof AVAILABLE_MODES[number];
@@ -69,7 +79,9 @@ export class ModeService {
             };
         }
 
-        const normalized = modeName.trim().toLowerCase() as Mode;
+        const raw = modeName.trim().toLowerCase();
+        const mapped = MODE_UI_NAME_REVERSE[raw] || raw;
+        const normalized = mapped as Mode;
 
         if (!AVAILABLE_MODES.includes(normalized)) {
             return {

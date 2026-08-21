@@ -11,19 +11,19 @@ describe('modeUi', () => {
 
         expect(sendFn).toHaveBeenCalledTimes(1);
         const text = sendFn.mock.calls[0][0] as string;
-        expect(text).toContain('Mode Management');
+        expect(text).toContain('Execution Mode Management');
         expect(sendFn.mock.calls[0][1]).toBeInstanceOf(InlineKeyboard);
     });
 
     it('syncs mode from CDP when deps.getCurrentCdp is provided', async () => {
         const modeService = new ModeService();
-        const mockCdp = { getCurrentMode: jest.fn().mockResolvedValue('plan') };
+        const mockCdp = { getCurrentMode: jest.fn().mockResolvedValue('full_machine') };
         const sendFn = jest.fn().mockResolvedValue(undefined);
 
         await sendModeUI(sendFn, modeService, { getCurrentCdp: () => mockCdp as any });
 
         expect(mockCdp.getCurrentMode).toHaveBeenCalled();
-        expect(modeService.getCurrentMode()).toBe('plan');
+        expect(modeService.getCurrentMode()).toBe('full_machine');
     });
 
     it('does not sync mode when CDP returns null', async () => {
@@ -34,7 +34,7 @@ describe('modeUi', () => {
         await sendModeUI(sendFn, modeService, { getCurrentCdp: () => mockCdp as any });
 
         expect(mockCdp.getCurrentMode).toHaveBeenCalled();
-        expect(modeService.getCurrentMode()).toBe('fast');
+        expect(modeService.getCurrentMode()).toBe('default');
     });
 
     it('works without deps parameter', async () => {
@@ -53,6 +53,6 @@ describe('modeUi', () => {
         await sendModeUI(sendFn, modeService, { getCurrentCdp: () => null });
 
         expect(sendFn).toHaveBeenCalledTimes(1);
-        expect(modeService.getCurrentMode()).toBe('fast');
+        expect(modeService.getCurrentMode()).toBe('default');
     });
 });

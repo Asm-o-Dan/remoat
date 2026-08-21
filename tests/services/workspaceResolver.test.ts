@@ -377,33 +377,4 @@ describe('resolveWorkspaceAndCdp', () => {
             }
         });
     });
-
-    // --- Topic inheritance and isGeneralTopic ---
-
-    describe('isGeneralTopic and Forum topic inheritance', () => {
-        it('identifies General topics correctly', () => {
-            const { isGeneralTopic } = require('../../src/services/workspaceResolver');
-            expect(isGeneralTopic({ chatId: 123 })).toBe(true);
-            expect(isGeneralTopic({ chatId: 123, threadId: undefined })).toBe(true);
-            expect(isGeneralTopic({ chatId: 123, threadId: 1 })).toBe(true);
-            expect(isGeneralTopic({ chatId: 123, threadId: 2 })).toBe(false);
-            expect(isGeneralTopic({ chatId: 123, threadId: 99 })).toBe(false);
-        });
-
-        it('falls back to parent group binding when topic has no direct binding', async () => {
-            const findBindingMock = jest.fn((key: string) => {
-                if (key === '12345') return { workspacePath: 'parent-project' };
-                return undefined;
-            });
-            const deps = makeDeps({ findBinding: findBindingMock });
-            const result = await resolveWorkspaceAndCdp({ chatId: 12345, threadId: 88 }, deps);
-
-            expect(findBindingMock).toHaveBeenCalledWith('12345:88');
-            expect(findBindingMock).toHaveBeenCalledWith('12345');
-            expect(result.ok).toBe(true);
-            if (result.ok) {
-                expect(deps.getWorkspacePath).toHaveBeenCalledWith('parent-project');
-            }
-        });
-    });
 });

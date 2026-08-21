@@ -273,7 +273,7 @@ export class CdpService extends EventEmitter {
             t.webSocketDebuggerUrl &&
             !t.title?.includes('Launchpad') &&
             !t.url?.includes('workbench-jetski-agent') &&
-            (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade') || t.url?.includes('/c/') || t.url?.includes('127.0.0.1'))
+            (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade'))
         );
 
         if (!target) {
@@ -287,8 +287,7 @@ export class CdpService extends EventEmitter {
         if (!target) {
             target = allPages.find(t =>
                 t.webSocketDebuggerUrl &&
-                !t.title?.includes('Launchpad') &&
-                !t.url?.includes('workbench-jetski-agent')
+                (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade') || t.title?.includes('Launchpad'))
             );
         }
 
@@ -549,27 +548,17 @@ export class CdpService extends EventEmitter {
             return this.launchAndConnectWorkspace(workspacePath, projectName);
         }
 
-        // Filter workbench pages (exclude Launchpad, Manager, iframe, worker)
-        let workbenchPages = pages.filter(
+        // Filter workbench pages only (exclude Launchpad, Manager, iframe, worker)
+        const workbenchPages = pages.filter(
             (t: any) =>
                 t.type === 'page' &&
                 t.webSocketDebuggerUrl &&
                 !t.title?.includes('Launchpad') &&
                 !t.url?.includes('workbench-jetski-agent') &&
-                (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade')),
+                t.url?.includes('workbench'),
         );
 
-        if (workbenchPages.length === 0) {
-            workbenchPages = pages.filter(
-                (t: any) =>
-                    t.type === 'page' &&
-                    t.webSocketDebuggerUrl &&
-                    !t.title?.includes('Launchpad') &&
-                    !t.url?.includes('workbench-jetski-agent'),
-            );
-        }
-
-        logger.debug(`[CdpService] Searching for workspace "${projectName}" (port=${respondingPort})... ${workbenchPages.length} candidate pages:`);
+        logger.debug(`[CdpService] Searching for workspace "${projectName}" (port=${respondingPort})... ${workbenchPages.length} workbench pages:`);
         for (const p of workbenchPages) {
             logger.debug(`  - title="${p.title}" url=${p.url}`);
         }
@@ -625,12 +614,6 @@ export class CdpService extends EventEmitter {
         projectName: string,
         workspacePath?: string,
     ): Promise<boolean> {
-        // Fast-path: if only 1 active page exists on the debugging port, connect to it directly
-        if (workbenchPages.length === 1) {
-            const onlyPage = workbenchPages[0];
-            await this.connectToPage(onlyPage, projectName);
-            return true;
-        }
         for (const page of workbenchPages) {
             try {
                 // Temporarily connect to retrieve document.title
@@ -1685,7 +1668,7 @@ export class CdpService extends EventEmitter {
             return null;
         }
         const expression = '(() => {'
-            + ' const uiNameMap = { fast: "Fast", plan: "Planning" };'
+            + ' const uiNameMap = { default: "Default", full_machine: "Full Machine", turbo: "Turbo", fast: "Fast", plan: "Planning" };'
             + ' const knownModes = Object.values(uiNameMap).map(n => n.toLowerCase());'
             + ' const reverseMap = {};'
             + ' Object.entries(uiNameMap).forEach(([k, v]) => { reverseMap[v.toLowerCase()] = k; });'
@@ -1718,10 +1701,10 @@ export class CdpService extends EventEmitter {
     /**
      * Operate Antigravity UI mode dropdown to switch to the specified mode.
      * Two-step approach:
-     *   Step 1: Click mode toggle button ("Fast"/"Plan" + chevron icon) to open dropdown
+     *   Step 1: Click mode toggle button ("Default"/"Full Machine"/"Turbo" + chevron icon) to open dropdown
      *   Step 2: Select the target mode option from dropdown
      *
-     * @param modeName Mode name to set (e.g., 'fast', 'plan')
+     * @param modeName Mode name to set (e.g., 'default', 'full_machine', 'turbo')
      */
     async setUiMode(modeName: string): Promise<UiSyncResult> {
         if (!this.isConnectedFlag || !this.ws) {
@@ -1731,7 +1714,7 @@ export class CdpService extends EventEmitter {
         const safeMode = JSON.stringify(modeName);
 
         // Internal mode name -> Antigravity UI display name mapping
-        const uiNameMap = JSON.stringify({ fast: 'Fast', plan: 'Planning' });
+        const uiNameMap = JSON.stringify({ default: 'Default', full_machine: 'Full Machine', turbo: 'Turbo', fast: 'Fast', plan: 'Planning' });
 
         // Build DOM manipulation script avoiding backticks in template literals
         const expression = '(async () => {'
@@ -1971,224 +1954,6 @@ export class CdpService extends EventEmitter {
             }
             return { ok: false, error: value?.error || 'UI operation failed (setUiModel)' };
         } catch (error: any) {
-            return { ok: false, error: error?.message || String(error) };
-        }
-    }
-
-    /**
-     * Read the current Security Preset from the Antigravity Agent Settings page.
-     *
-     * @returns Internal preset name or null
-     */
-    async getSecurityPreset(): Promise<string | null> {
-        if (!this.isConnectedFlag || !this.ws) {
-            return null;
-        }
-        const expression = `(async () => {
-            const presetMap = {
-                'inherit general': 'inherit',
-                'default': 'default',
-                'full machine': 'full-machine',
-                'turbo mode': 'turbo',
-                'turbo': 'turbo',
-                'custom': 'custom'
-            };
-
-            const settingsLabels = Array.from(document.querySelectorAll('*')).filter(el => {
-                const text = (el.textContent || '').trim();
-                return /^Security Preset$/i.test(text) && el.children.length === 0;
-            });
-
-            if (settingsLabels.length === 0) return null;
-
-            for (const label of settingsLabels) {
-                const container = label.closest('[class*="setting"]') || label.parentElement?.parentElement;
-                if (!container) continue;
-                const btns = container.querySelectorAll('button, [role="combobox"], select, [class*="dropdown"]');
-                for (const btn of btns) {
-                    const btnText = (btn.textContent || '').trim().toLowerCase();
-                    for (const [uiName, internal] of Object.entries(presetMap)) {
-                        if (btnText.includes(uiName)) {
-                            return internal;
-                        }
-                    }
-                }
-            }
-            return null;
-        })()`;
-        try {
-            const contextId = this.getPrimaryContextId();
-            const res = await this.call('Runtime.evaluate', {
-                expression, returnByValue: true, awaitPromise: true,
-                contextId: contextId || undefined
-            });
-            return res?.result?.value || null;
-        }
-        catch {
-            return null;
-        }
-    }
-
-    /**
-     * Open Antigravity Settings, navigate to Agent Settings, and select a Security Preset.
-     *
-     * @param presetName Preset to select
-     */
-    async setSecurityPreset(presetName: string): Promise<{ ok: boolean; preset?: string; error?: string }> {
-        if (!this.isConnectedFlag || !this.ws) {
-            throw new Error('Not connected to CDP. Call connect() first.');
-        }
-        const safePreset = JSON.stringify(presetName);
-        const expression = `(async () => {
-            const targetPreset = ${safePreset};
-            
-            const displayMap = {
-                'inherit': 'inherit general',
-                'default': 'default',
-                'full-machine': 'full machine',
-                'turbo': 'turbo mode',
-                'custom': 'custom'
-            };
-            const targetText = (displayMap[targetPreset] || targetPreset).toLowerCase();
-
-            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-            const clickEl = (el) => {
-                if (!el) return;
-                const rect = el.getBoundingClientRect();
-                const x = rect.left + rect.width / 2;
-                const y = rect.top + rect.height / 2;
-                ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
-                    el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
-                });
-                if (typeof el.click === 'function') el.click();
-            };
-
-            // Step 1: Open Settings via Ctrl+,
-            document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', {
-                key: ',', code: 'Comma', keyCode: 188, which: 188,
-                ctrlKey: true, metaKey: false, bubbles: true, cancelable: true
-            }));
-            window.dispatchEvent(new KeyboardEvent('keydown', {
-                key: ',', code: 'Comma', keyCode: 188, which: 188,
-                ctrlKey: true, metaKey: false, bubbles: true, cancelable: true
-            }));
-            await sleep(800);
-
-            // Step 2: Find the Security Preset label in settings
-            let securityLabel = null;
-            for (let attempt = 0; attempt < 5; attempt++) {
-                const candidates = Array.from(document.querySelectorAll('*')).filter(el => {
-                    const t = (el.textContent || '').trim();
-                    return /^Security Preset$/i.test(t) && el.children.length === 0;
-                });
-                if (candidates.length > 0) {
-                    securityLabel = candidates[0];
-                    break;
-                }
-                const tabs = Array.from(document.querySelectorAll('a, button, [role="tab"], div[class*="tab"]'));
-                const agentTab = tabs.find(t => /agent\\s*settings/i.test(t.textContent || ''));
-                if (agentTab) clickEl(agentTab);
-                await sleep(500);
-            }
-
-            if (!securityLabel) {
-                const escEvent = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
-                document.activeElement?.dispatchEvent(escEvent);
-                window.dispatchEvent(escEvent);
-                return { ok: false, error: 'Could not find Security Preset label in Agent Settings' };
-            }
-
-            // Step 3: Find the dropdown button near the label
-            const container = securityLabel.closest('[class*="setting"]') || securityLabel.parentElement?.parentElement || securityLabel.parentElement;
-            if (!container) {
-                return { ok: false, error: 'Could not find Security Preset container' };
-            }
-
-            const dropdownBtn = container.querySelector('button, [role="combobox"], select, [class*="dropdown"]');
-            if (!dropdownBtn) {
-                return { ok: false, error: 'Could not find Security Preset dropdown button' };
-            }
-
-            // Step 4: Click the dropdown to open it (or set value if select)
-            let matched = null;
-            if (dropdownBtn.tagName.toLowerCase() === 'select') {
-                for (const opt of Array.from(dropdownBtn.options)) {
-                    const optText = (opt.textContent || '').trim().toLowerCase();
-                    if (optText.includes(targetText) || targetText.includes(optText)) {
-                        dropdownBtn.value = opt.value;
-                        dropdownBtn.dispatchEvent(new Event('change', { bubbles: true }));
-                        matched = opt;
-                        break;
-                    }
-                }
-            } else {
-                clickEl(dropdownBtn);
-                await sleep(400);
-
-                // Step 5: Find and click the target option
-                const options = Array.from(document.querySelectorAll(
-                    '[role="option"], [role="menuitem"], [role="menuitemradio"], [data-radix-collection-item], li, div.cursor-pointer'
-                )).filter(el => el.offsetParent !== null || el.getBoundingClientRect().width > 0);
-
-                for (const opt of options) {
-                    const optText = (opt.textContent || '').trim().toLowerCase();
-                    if (optText.includes(targetText) || targetText.includes(optText)) {
-                        matched = opt;
-                        break;
-                    }
-                }
-
-                if (!matched) {
-                    const allVisible = Array.from(document.querySelectorAll('*')).filter(el =>
-                        el.offsetParent !== null && el.children.length === 0
-                    );
-                    for (const el of allVisible) {
-                        const elText = (el.textContent || '').trim().toLowerCase();
-                        if (elText === targetText || (targetText.split(' ').every(w => elText.includes(w)))) {
-                            matched = el.closest('[role="option"], [role="menuitem"], [role="menuitemradio"], button, div.cursor-pointer, li') || el;
-                            break;
-                        }
-                    }
-                }
-
-                if (matched) {
-                    clickEl(matched);
-                    await sleep(300);
-                }
-            }
-
-            if (matched) {
-                await sleep(200);
-                const escEvent = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
-                document.activeElement?.dispatchEvent(escEvent);
-                window.dispatchEvent(escEvent);
-                
-                return { ok: true, preset: matched.textContent.trim() };
-            }
-
-            const escEvent = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
-            document.activeElement?.dispatchEvent(escEvent);
-            window.dispatchEvent(escEvent);
-            await sleep(200);
-            document.activeElement?.dispatchEvent(escEvent);
-            window.dispatchEvent(escEvent);
-
-            return { ok: false, error: 'Preset option "' + targetPreset + '" not found in dropdown' };
-        })()`;
-        try {
-            const contextId = this.getPrimaryContextId();
-            const res = await this.call('Runtime.evaluate', {
-                expression, returnByValue: true, awaitPromise: true,
-                contextId: contextId || undefined
-            });
-            const value = res?.result?.value;
-            if (value?.ok) {
-                return { ok: true, preset: value.preset };
-            }
-            return { ok: false, error: value?.error || 'UI operation failed (setSecurityPreset)' };
-        }
-        catch (error: any) {
             return { ok: false, error: error?.message || String(error) };
         }
     }
