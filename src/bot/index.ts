@@ -903,23 +903,35 @@ async function sendPromptToAntigravity(
 // Bot main entry point
 // =============================================================================
 
-export const startBot = async (cliLogLevel?: LogLevel) => {
-    const config = loadConfig();
-    logger.setLogLevel(cliLogLevel ?? config.logLevel);
+export interface BotFactoryOptions {
+    config?: ReturnType<typeof loadConfig>;
+    db?: Database.Database;
+    bridge?: CdpBridge;
+    workspaceBindingRepo?: WorkspaceBindingRepository;
+    chatSessionRepo?: ChatSessionRepository;
+    templateRepo?: TemplateRepository;
+    workspaceService?: WorkspaceService;
+    modeService?: ModeService;
+    modelService?: ModelService;
+}
 
-    const dbPath = process.env.NODE_ENV === 'test' ? ':memory:' : ConfigLoader.getDefaultDbPath();
-    const db = new Database(dbPath);
-    db.pragma('journal_mode = WAL');
-    const modeService = new ModeService();
-    const modelService = new ModelService();
-    const templateRepo = new TemplateRepository(db);
-    const workspaceBindingRepo = new WorkspaceBindingRepository(db);
-    const chatSessionRepo = new ChatSessionRepository(db);
-    const workspaceService = new WorkspaceService(config.workspaceBaseDir);
+export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
+    const config = options.config ?? loadConfig();
+    const db = options.db ?? (() => {
+        const dbPath = process.env.NODE_ENV === 'test' ? ':memory:' : ConfigLoader.getDefaultDbPath();
+        const d = new Database(dbPath);
+        d.pragma('journal_mode = WAL');
+        return d;
+    })();
 
-    await ensureAntigravityRunning();
+    const modeService = options.modeService ?? new ModeService();
+    const modelService = options.modelService ?? new ModelService();
+    const templateRepo = options.templateRepo ?? new TemplateRepository(db);
+    const workspaceBindingRepo = options.workspaceBindingRepo ?? new WorkspaceBindingRepository(db);
+    const chatSessionRepo = options.chatSessionRepo ?? new ChatSessionRepository(db);
+    const workspaceService = options.workspaceService ?? new WorkspaceService(config.workspaceBaseDir);
 
-    const bridge = initCdpBridge(config.autoApproveFileEdits);
+    const bridge = options.bridge ?? initCdpBridge(config.autoApproveFileEdits);
     bridge.botToken = config.telegramBotToken;
 
     const chatSessionService = new ChatSessionService();
@@ -2656,17 +2668,21 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         }).catch((e) => logger.error('[voiceMsg] dispatch failed:', e));
     });
 
-    logger.info('Starting Remoat Telegram bot...');
-
-    // Graceful shutdown: close database on exit
-    const closeDb = () => { try { db.close(); } catch (e) { logger.debug('[shutdown] db.close() failed:', e); } };
-    process.on('exit', closeDb);
-    process.on('SIGINT', () => { closeDb(); process.exit(0); });
-    process.on('SIGTERM', () => { closeDb(); process.exit(0); });
-
     bot.catch((err) => {
         logger.error('Bot error:', err);
     });
+
+    return bot;
+};
+
+export const startBot = async (cliLogLevel?: LogLevel) => {
+    const config = loadConfig();
+    logger.setLogLevel(cliLogLevel ?? config.logLevel);
+
+    await ensureAntigravityRunning();
+    const bot = createBot();
+
+    logger.info('Starting Remoat Telegram bot...');
 
     await bot.start({
         onStart: async (botInfo) => {
