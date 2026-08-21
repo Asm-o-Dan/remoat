@@ -32,7 +32,7 @@ export interface ApprovalDetectorOptions {
 const DETECT_APPROVAL_SCRIPT = `(() => {
     const ALLOW_ONCE_PATTERNS = [
         'allow once', 'allow one time', 'разрешить один раз', 'выполнить один раз',
-        'proceed', 'continue', 'продолжить', 'run once', 'run this', 'execute once',
+        'proceed', 'continue', 'продолжить',
         '今回のみ許可', '1回のみ許可', '一度許可'
     ];
     const ALWAYS_ALLOW_PATTERNS = [
@@ -47,16 +47,17 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         'この会話を許可',
     ];
     const ALLOW_PATTERNS = [
-        'allow', 'permit', 'run', 'execute', 'run command', 'accept', 'approve', 'confirm',
-        'разрешить', 'выполнить', 'запустить', 'принять', 'подтвердить', 'сохранить', 'save', 'apply', 'применить',
-        'yes', 'да', 'ok', 'хорошо', 'согласен', 'agree', 'proceed',
+        'allow', 'permit', 'accept', 'approve', 'confirm',
+        'разрешить', 'подтвердить', 'принять', 'согласен',
         '許可', '承認', '確認', '実行'
     ];
     const DENY_PATTERNS = [
         'deny', 'reject', 'cancel', 'decline', 'dismiss', 'block',
         'отклонить', 'отмена', 'запретить', 'отменить', 'блокировать',
-        'no', 'нет',
         '拒否', '却下'
+    ];
+    const IGNORE_PATTERNS = [
+        'finished', 'completed', 'failed', 'running', 'success', 'succeeded', 'завершено', 'выполнено'
     ];
 
     const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
@@ -66,40 +67,45 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
 
     let approveBtn = allButtons.find(btn => {
         const t = normalize(btn.textContent || '');
+        if (IGNORE_PATTERNS.some(p => t.includes(p))) return false;
         return ALLOW_ONCE_PATTERNS.some(p => t.includes(p));
     }) || null;
 
     if (!approveBtn) {
         approveBtn = allButtons.find(btn => {
             const t = normalize(btn.textContent || '');
+            if (IGNORE_PATTERNS.some(p => t.includes(p))) return false;
             const isAlways = ALWAYS_ALLOW_PATTERNS.some(p => t.includes(p));
-            return !isAlways && ALLOW_PATTERNS.some(p => t.includes(p));
+            return !isAlways && ALLOW_PATTERNS.some(p => t === p || t.startsWith(p + ' ') || t.endsWith(' ' + p));
         }) || null;
     }
 
     if (!approveBtn) return null;
 
-    let container = approveBtn.closest('[role="dialog"], .modal, .dialog, .approval-container, .permission-dialog');
+    let container = approveBtn.closest('[role="dialog"], .modal, .dialog, .approval-container, .permission-dialog, [class*="modal"], [class*="dialog"]');
     if (!container) {
-        // Walk up ancestors until we find one that also contains a deny button
+        // Walk up ancestors until we find a local container that also contains a deny button (max 5 levels)
         let el = approveBtn.parentElement;
-        for (let i = 0; i < 6 && el && el !== document.body; i++) {
-            const btns = Array.from(el.querySelectorAll('button')).filter(b => b.offsetParent !== null);
-            if (btns.some(b => DENY_PATTERNS.some(p => normalize(b.textContent || '').includes(p)))) {
+        for (let i = 0; i < 5 && el && el !== document.body && el !== document.documentElement; i++) {
+            const btns = Array.from(el.querySelectorAll('button')).filter(b => b.offsetParent !== null && b !== approveBtn);
+            if (btns.some(b => DENY_PATTERNS.some(p => normalize(b.textContent || '') === p || normalize(b.textContent || '').includes(p)))) {
                 container = el;
                 break;
             }
             el = el.parentElement;
         }
     }
-    if (!container) container = document.body;
+
+    // STRICT: Never fall back to document.body, as that pairs unrelated page buttons
+    if (!container || container === document.body || container === document.documentElement) return null;
 
     const containerButtons = Array.from(container.querySelectorAll('button'))
-        .filter(btn => btn.offsetParent !== null);
+        .filter(btn => btn.offsetParent !== null && btn !== approveBtn);
 
     const denyBtn = containerButtons.find(btn => {
         const t = normalize(btn.textContent || '');
-        return DENY_PATTERNS.some(p => t.includes(p));
+        if (IGNORE_PATTERNS.some(p => t.includes(p))) return false;
+        return DENY_PATTERNS.some(p => t === p || t.startsWith(p + ' ') || t.endsWith(' ' + p));
     }) || null;
 
     if (!denyBtn) return null;
