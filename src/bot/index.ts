@@ -64,7 +64,7 @@ import { sendAutoAcceptUI, AUTOACCEPT_BTN_ON, AUTOACCEPT_BTN_OFF, AUTOACCEPT_BTN
 import { handleScreenshot } from '../ui/screenshotUi';
 import { buildProjectListUI, PROJECT_SELECT_ID, PROJECT_PAGE_PREFIX, parseProjectPageId } from '../ui/projectListUi';
 import { buildSessionPickerUI, buildChatsListUI, SESSION_SELECT_ID, isSessionSelectId } from '../ui/sessionPickerUi';
-import { buildSkillsText, sendSkillsUI } from '../ui/skillsUi';
+import { buildSkillsText, buildSkillsPayload, sendSkillsUI } from '../ui/skillsUi';
 import { scanInstalledSkills } from '../services/skillsScanner';
 import { exec as execCommand, spawn } from 'child_process';
 import * as fs from 'fs';
@@ -1461,7 +1461,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 return;
             }
         }
-        await sendSkillsUI(async (text) => { await replyHtml(ctx, text); }, fullWsPath);
+        await sendSkillsUI(async (text, keyboard) => { await replyHtml(ctx, text, keyboard); }, fullWsPath, 0);
     });
 
     // /sh, /exec, /cmd, /terminal, /bash command — execute host shell commands
@@ -1694,6 +1694,23 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard });
             } catch (e) { logger.debug('[modeSelect] editMessageText failed (expected if unchanged):', e); }
             await ctx.answerCallbackQuery({ text: `Mode: ${MODE_DISPLAY_NAMES[selectedMode] || selectedMode}` });
+            return;
+        }
+
+        // Skills list pagination
+        if (data.startsWith('skills_page:')) {
+            const page = parseInt(data.replace('skills_page:', ''), 10) || 0;
+            const resolved = await resolveWorkspaceAndCdp(ch);
+            const session = chatSessionRepo.findByChannelId(channelKey(ch));
+            const workspacePath = session?.workspacePath || (resolved.ok ? resolved.projectName : undefined);
+            const fullWsPath = workspacePath ? workspaceService.getWorkspacePath(workspacePath) : undefined;
+            const payload = buildSkillsPayload(fullWsPath, page);
+            try {
+                await ctx.editMessageText(payload.text, { parse_mode: 'HTML', reply_markup: payload.keyboard });
+            } catch (e) {
+                logger.debug('[skillsPage] editMessageText failed:', e);
+            }
+            await ctx.answerCallbackQuery();
             return;
         }
 

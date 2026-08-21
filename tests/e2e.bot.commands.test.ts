@@ -25,16 +25,20 @@ describe('E2E Bot Suite: Dynamic Agent Skills, Models/Quota, Mode & Shell Execut
             expect(debugSkill?.description.length).toBeGreaterThan(10);
         });
 
-        it('formats skills as pure tap-to-copy HTML text without inline buttons', async () => {
-            const text = buildSkillsText();
-            expect(text).toContain('⚡ <b>Antigravity Agent Skills');
-            expect(text).toContain('<code>/debug-detective</code>');
-            expect(text).toContain('<code>/multi-critic-review</code>');
+        it('formats skills as tap-to-copy HTML text with pagination controls', async () => {
+            const { buildSkillsPayload } = require('../src/ui/skillsUi');
+            const payload = buildSkillsPayload(undefined, 0, 6);
+            expect(payload.text).toContain('⚡ <b>Antigravity Agent Skills');
+            expect(payload.text).toContain('<code>/');
+            expect(payload.totalPages).toBeGreaterThan(1);
+            expect(payload.currentPage).toBe(0);
+            expect(payload.keyboard).toBeDefined();
 
             const sendFn = jest.fn().mockResolvedValue(undefined);
             await sendSkillsUI(sendFn);
             expect(sendFn).toHaveBeenCalledTimes(1);
             expect(typeof sendFn.mock.calls[0][0]).toBe('string');
+            expect(sendFn.mock.calls[0][1]).toBeDefined();
         });
     });
 
