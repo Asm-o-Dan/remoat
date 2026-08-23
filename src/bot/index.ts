@@ -823,6 +823,32 @@ async function sendPromptToAntigravity(
                         await upsertLiveResponse(`${PHASE_ICONS.complete} Complete`, t('Failed to extract response. Use /screenshot to verify.'), `⏱️ ${elapsed}s`, { expectedVersion: liveResponseUpdateVersion });
                     }
 
+                    // Attach sources_and_actions.txt if actions/sources were performed
+                    const activityEntries = progressLog.filter(e => e.kind === 'activity');
+                    if (activityEntries.length > 0) {
+                        try {
+                            const wsName = cdp.getCurrentWorkspaceName() || 'Antigravity';
+                            const logLines = [
+                                `=====================================================`,
+                                `  Remoat Sources and Actions Activity Log            `,
+                                `  Project: ${wsName}                                `,
+                                `  Model:   ${modelLabel}                            `,
+                                `  Elapsed: ${elapsed}s                              `,
+                                `  Time:    ${new Date().toISOString()}              `,
+                                `=====================================================\n`,
+                                `[Actions & Tool Calls]:`,
+                                ...activityEntries.map(e => `• ${e.text.replace(/<[^>]+>/g, '')}`),
+                            ];
+                            const logBuf = Buffer.from(logLines.join('\n'), 'utf-8');
+                            await api.sendDocument(channel.chatId, new InputFile(logBuf, 'sources_and_actions.txt'), {
+                                caption: `📋 Sources & Actions (${activityEntries.length} items)`,
+                                message_thread_id: channel.threadId,
+                            }).catch(() => {});
+                        } catch (e) {
+                            logger.debug('[sendPrompt] sources_and_actions attachment failed:', e);
+                        }
+                    }
+
                     if (options) {
                         try {
                             const sessionInfo = await options.chatSessionService.getCurrentSessionInfo(cdp);
@@ -1573,7 +1599,7 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
         });
     });
 
-    // /newproject, /new_project command — create new project folder and workspace
+    // /newproject, /new_project command — create new project folder and connect in Antigravity
     bot.command(['newproject', 'new_project'], async (ctx) => {
         const projectName = (ctx.match || '').trim();
         if (!projectName) {
@@ -1610,48 +1636,14 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
             );
 
             const cdp = await bridge.pool.getOrConnect(projectPath);
+            if (typeof (cdp as any).switchProjectInSidebar === 'function') {
+                await cdp.switchProjectInSidebar(projectName).catch(() => {});
+            }
             await chatSessionService.startNewChat(cdp);
             await replyHtml(ctx, `✅ <b>Workspace Ready!</b> Send your prompt now to start coding.`);
         } catch (e: any) {
             logger.error('[newproject] failed:', e);
             await ctx.reply(`❌ Failed to create project: ${e.message}`);
-        }
-    });
-
-    // /newworkspace, /new_workspace command — launch/open new workspace window
-    bot.command(['newworkspace', 'new_workspace'], async (ctx) => {
-        const target = (ctx.match || '').trim();
-        if (!target) {
-            await replyHtml(ctx,
-                `🪟 <b>New Workspace Window</b>\n\n` +
-                `<b>Использование:</b> <code>/newworkspace &lt;имя_папки_или_путь&gt;</code>\n` +
-                `<b>Пример:</b> <code>/newworkspace my_project</code>`
-            );
-            return;
-        }
-
-        const targetPath = path.isAbsolute(target) ? target : path.join(config.workspaceBaseDir, target);
-        try {
-            if (!fs.existsSync(targetPath)) {
-                fs.mkdirSync(targetPath, { recursive: true });
-            }
-
-            const projectName = path.basename(targetPath);
-            const ch = getChannel(ctx);
-            const key = channelKey(ch);
-            workspaceBindingRepo.upsert({ channelId: key, workspacePath: projectName, guildId: String(ch.chatId) });
-
-            await replyHtml(ctx,
-                `🪟 <b>Opening Workspace Window…</b>\n\n` +
-                `<b>Path:</b> <code>${escapeHtml(targetPath)}</code>`
-            );
-
-            const cdp = await bridge.pool.getOrConnect(targetPath);
-            await chatSessionService.startNewChat(cdp);
-            await replyHtml(ctx, `✅ <b>Workspace Window Connected!</b> Send your prompt now.`);
-        } catch (e: any) {
-            logger.error('[newworkspace] failed:', e);
-            await ctx.reply(`❌ Failed to open workspace: ${e.message}`);
         }
     });
 
@@ -2066,6 +2058,19 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
             } else {
                 await ctx.answerCallbackQuery({ text: 'Button not found in IDE. Use /allow or /deny to retry.' });
             }
+            return;
+        }
+
+        // Approval screenshot button
+        if (data.startsWith('screenshot_action:')) {
+            const projectName = data.substring('screenshot_action:'.length);
+            const cdp = (projectName ? bridge.pool.getConnected(projectName) : null) ?? getCurrentCdp(bridge);
+            await ctx.answerCallbackQuery({ text: '📸 Taking screenshot...' });
+            await handleScreenshot(
+                async (input, caption) => { await ctx.replyWithPhoto(input, { caption }); },
+                async (text) => { await ctx.reply(text); },
+                cdp,
+            );
             return;
         }
 
@@ -2704,9 +2709,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     { command: 'quota', description: '📊 Квоты и лимиты моделей' },
                     { command: 'mode', description: '⚙️ Режим агента (Default / Full Machine / Turbo)' },
                     { command: 'sh', description: '💻 Выполнить команду терминала' },
-                    { command: 'newproject', description: '📁 Создать новый проект и окно' },
-                    { command: 'newworkspace', description: '🪟 Открыть новое окно воркспейса' },
-                    { command: 'workspaces', description: '🪟 Переключить окно Antigravity' },
+                    { command: 'newproject', description: '📁 Создать новый проект на диске' },
                     { command: 'project', description: '📁 Сменить рабочий проект' },
                     { command: 'summary', description: '📋 Краткая сводка по чату' },
                     { command: 'autoaccept', description: '🛡️ Авто-одобрение действий' },

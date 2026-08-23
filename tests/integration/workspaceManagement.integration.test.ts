@@ -32,6 +32,7 @@ describe('Integration Test Suite: Workspace & Project Management via Telegram', 
         setUiModel: jest.fn().mockResolvedValue({ ok: true, model: 'Claude Sonnet 4.6' }),
         injectMessage: jest.fn().mockResolvedValue({ ok: true }),
         startNewChat: jest.fn().mockResolvedValue(true),
+        switchProjectInSidebar: jest.fn().mockResolvedValue(true),
         getPrimaryContextId: jest.fn().mockReturnValue(1),
         call: jest.fn().mockResolvedValue({ result: { value: true } }),
     };
@@ -145,23 +146,7 @@ describe('Integration Test Suite: Workspace & Project Management via Telegram', 
         });
     });
 
-    describe('2. /newworkspace Command', () => {
-        it('creates and binds workspace with relative or subfolder path', async () => {
-            const replies = await simulator.sendText('/newworkspace backend_service');
-
-            const wsDir = path.join(testBaseDir, 'backend_service');
-            expect(fs.existsSync(wsDir)).toBe(true);
-
-            const binding = workspaceBindingRepo.findByChannelId('12345678');
-            expect(binding?.workspacePath).toBe('backend_service');
-
-            const allText = replies.map(r => r.text).join('\n');
-            expect(allText).toContain('Opening Workspace Window');
-            expect(allText).toContain('Workspace Window Connected!');
-        });
-    });
-
-    describe('3. /project List and Interactive Button Switching', () => {
+    describe('2. /project List and Interactive Button Switching', () => {
         beforeEach(() => {
             // Seed 3 test workspaces
             fs.mkdirSync(path.join(testBaseDir, 'project_alpha'), { recursive: true });

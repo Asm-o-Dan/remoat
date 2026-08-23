@@ -301,6 +301,7 @@ export function ensureApprovalDetector(
                 keyboard.text('✅ Allow Chat', buildApprovalCustomId('always_allow', projectName, targetChannelStr));
             }
             keyboard.text(`❌ ${denyLabel}`, buildApprovalCustomId('deny', projectName, targetChannelStr));
+            keyboard.row().text('📸 Скриншот окна', `screenshot_action:${projectName}`);
 
             const msgId = await sendTelegramMessage(bridge.botApi, targetChannel, text, keyboard);
             if (msgId) {

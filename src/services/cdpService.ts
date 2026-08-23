@@ -603,7 +603,82 @@ export class CdpService extends EventEmitter {
         this.currentWorkspaceName = projectName;
         logger.debug(`[CdpService] Connected to workspace "${projectName}"`);
 
+        // If sidebar project button exists, activate it
+        await this.switchProjectInSidebar(projectName).catch(() => {});
+
         return true;
+    }
+
+    /**
+     * Switch active project in Antigravity's left sidebar.
+     * Finds the project header button (button.group/headerbtn) and clicks it.
+     */
+    async switchProjectInSidebar(projectName: string): Promise<boolean> {
+        if (!this.isConnectedFlag || !this.ws) {
+            return false;
+        }
+
+        const safeProject = JSON.stringify(projectName);
+        const expression = `(async () => {
+            const target = ${safeProject}.toLowerCase();
+            const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const targetNorm = norm(target);
+
+            const btns = Array.from(document.querySelectorAll('button.group\\\\/headerbtn, [data-testid*="project-header"], [data-testid*="project-row"]'));
+            
+            // 1. Match project button by text
+            const matchBtn = btns.find(b => {
+                const text = (b.textContent || '').trim().toLowerCase();
+                return text === target || norm(text) === targetNorm || norm(text).includes(targetNorm);
+            });
+
+            if (matchBtn) {
+                matchBtn.click();
+                await new Promise(r => setTimeout(r, 300));
+                return { ok: true, matched: matchBtn.textContent.trim() };
+            }
+
+            return { ok: false, error: 'Project not found in sidebar' };
+        })()`;
+
+        try {
+            const res = await this.call('Runtime.evaluate', {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+            });
+            const val = res?.result?.value;
+            if (val?.ok) {
+                this.currentWorkspaceName = projectName;
+                logger.info(`[CdpService] Switched sidebar project to: ${val.matched}`);
+                return true;
+            }
+            return false;
+        } catch (e: any) {
+            logger.warn(`[CdpService] switchProjectInSidebar failed:`, e);
+            return false;
+        }
+    }
+
+    /**
+     * Trigger the "Create New Project" modal in Antigravity's sidebar.
+     */
+    async triggerAddProjectModal(): Promise<boolean> {
+        if (!this.isConnectedFlag || !this.ws) return false;
+
+        const expression = `(async () => {
+            const addBtn = document.querySelector('[data-testid="sidebar-add-project-button"]') || document.querySelector('button[aria-label="Create New Project"]');
+            if (!addBtn) return { ok: false };
+            addBtn.click();
+            return { ok: true };
+        })()`;
+
+        try {
+            const res = await this.call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+            return !!res?.result?.value?.ok;
+        } catch {
+            return false;
+        }
     }
 
     /**

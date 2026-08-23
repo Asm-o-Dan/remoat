@@ -34,21 +34,25 @@ const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
     let btn = null;
     let isProjectBtn = false;
     
-    // Priority 1: If inside a project (section present), look for project-specific "New Conversation in Project" button
-    if (currentSection) {
+    // Priority 1: Direct data-testid selector for Antigravity new conversation
+    btn = document.querySelector('[data-testid="new-conversation-button"]') ||
+          document.querySelector('a[data-testid="new-conversation-button"]');
+
+    // Priority 2: If inside a project (section present), look for project-specific button
+    if (!btn && currentSection) {
         btn = document.querySelector('a[aria-label*="New Conversation in Project"][href*="' + currentSection + '"]') ||
               document.querySelector('button[aria-label*="New Conversation in Project"][href*="' + currentSection + '"]');
         if (btn) isProjectBtn = true;
     }
     
-    // Priority 2: Any visible "New Conversation in Project" button if inside a project view
+    // Priority 3: Any visible "New Conversation in Project" button if inside a project view
     if (!btn) {
         btn = document.querySelector('[aria-label="New Conversation in Project"]') ||
               document.querySelector('[aria-label*="New Conversation in Project"]');
         if (btn) isProjectBtn = true;
     }
     
-    // Priority 3: Standard New Conversation / New Chat buttons
+    // Priority 4: Standard New Conversation / New Chat buttons
     if (!btn) {
         btn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]') ||
             document.querySelector('[aria-label="New Conversation"]') ||
@@ -221,17 +225,18 @@ function buildActivateChatByTitleScript(title: string): string {
         const wanted = (wantedRaw || '').toLowerCase().replace(/\\s+/g, ' ').trim();
         if (!wanted) return { ok: false, error: 'Empty target title' };
 
-        const panel = document.querySelector('.antigravity-agent-side-panel') || document;
-        const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+        const panel = document.querySelector('[data-testid="conversation-list-sidebar"]') ||
+                      document.querySelector('.antigravity-agent-side-panel') || document;
+        const normalize = (text) => (text || '').toLowerCase().replace(/\s+/g, ' ').trim();
         const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
         const clickTarget = (el) => {
-            const clickable = el.closest('button, [role="button"], a, li, [data-testid*="conversation"]') || el;
+            const clickable = el.closest('[data-testid="conversation-row-sidebar"], button, [role="button"], a, li, [data-testid*="conversation"]') || el;
             if (!(clickable instanceof HTMLElement)) return false;
             clickable.click();
             return true;
         };
 
-        const nodes = Array.from(panel.querySelectorAll('button, [role="button"], a, li, div, span'))
+        const nodes = Array.from(panel.querySelectorAll('[data-testid="conversation-row-sidebar"], button, [role="button"], a, li, div, span'))
             .filter(isVisible);
 
         const exact = [];
