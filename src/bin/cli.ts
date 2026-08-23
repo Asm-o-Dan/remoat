@@ -7,6 +7,7 @@ import { startAction } from './commands/start';
 import { doctorAction } from './commands/doctor';
 import { setupAction } from './commands/setup';
 import { openAction } from './commands/open';
+import { daemonAction } from './commands/daemon';
 import { ConfigLoader } from '../utils/configLoader';
 import { printWelcome } from './welcome';
 
@@ -34,6 +35,11 @@ program
     .command('start')
     .description('Start the Telegram bot')
     .action((_opts, cmd) => startAction(cmd.parent.opts(), cmd.parent));
+
+program
+    .command('daemon [action]')
+    .description('Supervisor daemon for auto-restart on crash and hot-reload on build (start/stop/status)')
+    .action((action) => daemonAction(action));
 
 program
     .command('doctor')

@@ -27,6 +27,8 @@
     "build": "tsc",
     "start": "ts-node src/bin/cli.ts",
     "start:built": "node dist/bin/cli.js",
+    "daemon": "ts-node src/services/daemonSupervisor.ts",
+    "daemon:built": "node dist/services/daemonSupervisor.js",
     "dev": "ts-node-dev --respawn src/bin/cli.ts",
     "docs:diagram": "mmdc -i docs/diagrams/architecture.mmd -o docs/images/architecture.svg -b transparent",
     "prepublishOnly": "npm run build && npm run test"

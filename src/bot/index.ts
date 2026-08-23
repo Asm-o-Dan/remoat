@@ -1663,6 +1663,15 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
         await bot.api.editMessageText(ctx.chat!.id, msg.message_id, `🏓 Pong! Latency: <b>${latency}ms</b>`, { parse_mode: 'HTML' });
     });
 
+    // /restart, /reboot, /reload command — gracefully reload bot process
+    bot.command(['restart', 'reboot', 'reload'], async (ctx) => {
+        await replyHtml(ctx, `🔄 <b>Restarting Remoat…</b>\n<i>Перезапускаю бота и загружаю свежую сборку…</i>`);
+        logger.info('[Bot] User triggered /restart from Telegram. Exiting for daemon supervisor reload...');
+        setTimeout(() => {
+            process.exit(0);
+        }, 500);
+    });
+
     // =============================================================================
     // Callback query handler (inline keyboard buttons)
     // =============================================================================
@@ -2705,6 +2714,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     { command: 'stop', description: '🛑 Прервать текущую генерацию' },
                     { command: 'status', description: '🔍 Статус подключений и окон' },
                     { command: 'ping', description: '🏓 Проверить задержку сети' },
+                    { command: 'restart', description: '🔄 Перезапустить бота и загрузить новую сборку' },
                     { command: 'help', description: '❓ Полная справка' },
                 ];
                 await bot.api.setMyCommands(ruCommands);
