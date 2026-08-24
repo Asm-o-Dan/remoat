@@ -29,6 +29,7 @@ export class DaemonSupervisor {
     private child: ChildProcess | null = null;
     private isShuttingDown = false;
     private restartTimer: NodeJS.Timeout | null = null;
+    private heartbeatTimer: NodeJS.Timeout | null = null;
     private watchers: fs.FSWatcher[] = [];
     private crashTimestamps: number[] = [];
     private options: Required<SupervisorOptions>;
@@ -56,6 +57,11 @@ export class DaemonSupervisor {
         this.setupSignalHandlers();
         this.setupWatchers();
 
+        // Keep event loop alive
+        if (!this.heartbeatTimer) {
+            this.heartbeatTimer = setInterval(() => {}, 30000);
+        }
+
         logger.info(`🛡️ [Supervisor] Remoat Daemon Supervisor started (PID: ${process.pid})`);
         logger.info(`📁 [Supervisor] Target script: ${this.options.targetScript}`);
         if (this.options.watchDirs.length > 0) {
@@ -71,6 +77,11 @@ export class DaemonSupervisor {
     public async stop(): Promise<void> {
         this.isShuttingDown = true;
         this.clearWatchers();
+
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = null;
+        }
 
         if (this.restartTimer) {
             clearTimeout(this.restartTimer);
