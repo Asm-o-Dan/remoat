@@ -72,7 +72,7 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         .filter(btn => btn.offsetParent !== null || (btn.getBoundingClientRect && btn.getBoundingClientRect().width > 0));
 
     // =========================================================================
-    // Path A: Interactive Question / URL Permission Modal (Submit + Skip / Options)
+    // Path A: Interactive Question / URL / Command Permission Modal (Submit + Skip / Options)
     // =========================================================================
     const submitBtn = allButtons.find(btn => {
         const t = normalize(btn.textContent || '');
@@ -80,9 +80,24 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         return /^(submit|confirm|отправить|подтвердить)\b/i.test(t) || /submit/i.test(aria);
     });
     if (submitBtn) {
-        const modal = submitBtn.closest('[role="dialog"], .modal, .dialog, div[class*="rounded-"], div[class*="border-"]')
-            || submitBtn.parentElement?.parentElement?.parentElement
-            || document.body;
+        let modal = submitBtn.closest('[role="dialog"], [role="alertdialog"], .modal, .dialog');
+        if (!modal) {
+            let curr = submitBtn.parentElement;
+            while (curr && curr !== document.body) {
+                const text = normalize(curr.textContent || '');
+                const hasHeader = curr.querySelector('h1, h2, h3, h4, [class*="font-semibold"], [class*="font-bold"]');
+                if (hasHeader && (text.includes('allow') || text.includes('permission') || text.includes('command') || text.includes('url') || text.includes('question') || text.includes('разреш'))) {
+                    modal = curr;
+                    break;
+                }
+                if (curr.children.length >= 3 && (text.includes('allow') || text.includes('permission') || text.includes('command') || text.includes('1 yes') || text.includes('1. '))) {
+                    modal = curr;
+                    break;
+                }
+                curr = curr.parentElement;
+            }
+        }
+        if (!modal) modal = submitBtn.parentElement?.parentElement?.parentElement || document.body;
 
         const skipBtn = allButtons.find(btn => {
             const t = normalize(btn.textContent || '');
@@ -90,21 +105,27 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
             return /^(skip|cancel|отмена|пропустить)\b/i.test(t) || /skip/i.test(aria);
         });
 
-        // Look for title / question
+        // 1. Look for question header
         const headerEl = modal.querySelector('h1, h2, h3, h4, [class*="font-bold"], [class*="font-semibold"], [class*="title"]')
-            || modal.querySelector('div[class*="text-"]');
+            || Array.from(modal.querySelectorAll('div, p, span')).find(el => {
+                const t = normalize(el.textContent || '');
+                return t.startsWith('allow ') || t.startsWith('do you want to') || t.startsWith('разрешить') || t.endsWith('?');
+            });
         let questionTitle = headerEl ? (headerEl.textContent || '').trim() : '';
 
-        // Look for target / URL / description input
-        const inputOrTarget = modal.querySelector('input, code, [class*="bg-"], [class*="border-"]')
-            || modal.querySelector('p');
-        let targetText = inputOrTarget ? (inputOrTarget.textContent || inputOrTarget.value || '').trim() : '';
+        // 2. Look for target / command badge
+        const badgeEl = modal.querySelector('code, pre, [class*="bg-muted"], [class*="bg-secondary"], [class*="bg-background"], input')
+            || Array.from(modal.querySelectorAll('div, p')).find(el => {
+                const t = (el.textContent || '').trim();
+                return t.length > 0 && t !== questionTitle && !/^(submit|skip|cancel|1\b|2\b|3\b|4\b|5\b)/i.test(t);
+            });
+        let targetText = badgeEl ? (badgeEl.textContent || badgeEl.value || '').trim() : '';
 
-        // Extract option items (e.g. 1 Yes, allow this time...)
-        const rawOptions = Array.from(modal.querySelectorAll('*')).filter(el => {
-            if (el.children.length > 4) return false;
+        // 3. Extract option items (e.g. 1 Yes, allow this time...)
+        const rawOptions = Array.from(modal.querySelectorAll('div, li, label, [role="radio"], [role="option"], p, span')).filter(el => {
+            if (el.children.length > 3) return false;
             const t = normalize(el.textContent || '');
-            if (t.length < 2 || t.length > 200) return false;
+            if (t.length < 2 || t.length > 300) return false;
             if (/^(submit|skip|cancel|отмена|отправить)\b/i.test(t)) return false;
             return /^[1-9][\\.\\)\\s]\\s*[a-zа-я]/i.test(t) || /^[1-9]$/.test(t) || /^(yes|no|allow|deny|да|нет)\\b/i.test(t);
         });
@@ -113,13 +134,16 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         const uniqueOptions = [];
         const seenTexts = new Set();
         for (const opt of rawOptions) {
-            const cleanText = (opt.textContent || '').trim();
+            const cleanText = (opt.textContent || '').trim().replace(/\\s+/g, ' ');
             if (cleanText.length > 0 && !seenTexts.has(cleanText) && cleanText !== questionTitle && cleanText !== targetText) {
-                seenTexts.add(cleanText);
-                uniqueOptions.push({
-                    index: uniqueOptions.length + 1,
-                    text: cleanText
-                });
+                const isSub = uniqueOptions.some(o => o.text.includes(cleanText));
+                if (!isSub) {
+                    seenTexts.add(cleanText);
+                    uniqueOptions.push({
+                        index: uniqueOptions.length + 1,
+                        text: cleanText
+                    });
+                }
             }
         }
 
@@ -159,21 +183,12 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
 
     let container = approveBtn.closest('[role="dialog"], .modal, .dialog, .approval-container, .permission-dialog, [class*="modal"], [class*="dialog"]');
     if (!container) {
-        let el = approveBtn.parentElement;
-        for (let i = 0; i < 5 && el && el !== document.body && el !== document.documentElement; i++) {
-            const btns = Array.from(el.querySelectorAll('button')).filter(b => b.offsetParent !== null && b !== approveBtn);
-            if (btns.some(b => DENY_PATTERNS.some(p => normalize(b.textContent || '') === p || normalize(b.textContent || '').includes(p)))) {
-                container = el;
-                break;
-            }
-            el = el.parentElement;
-        }
+        container = approveBtn.parentElement?.parentElement || approveBtn.parentElement || null;
     }
 
-    if (!container || container === document.body || container === document.documentElement) return null;
-
-    const containerButtons = Array.from(container.querySelectorAll('button'))
-        .filter(btn => btn.offsetParent !== null && btn !== approveBtn);
+    const containerButtons = container
+        ? Array.from(container.querySelectorAll('button')).filter(btn => btn.offsetParent !== null || (btn.getBoundingClientRect && btn.getBoundingClientRect().width > 0))
+        : allButtons;
 
     const denyBtn = containerButtons.find(btn => {
         const t = normalize(btn.textContent || '');
@@ -244,9 +259,19 @@ export function buildSelectAndSubmitScript(optionIndexOrText: number | string): 
 
         if (!submitBtn) return { ok: false, error: 'Submit button not found' };
 
-        const modal = submitBtn.closest('[role="dialog"], .modal, .dialog, div[class*="rounded-"], div[class*="border-"]')
-            || submitBtn.parentElement?.parentElement?.parentElement
-            || document.body;
+        let modal = submitBtn.closest('[role="dialog"], [role="alertdialog"], .modal, .dialog');
+        if (!modal) {
+            let curr = submitBtn.parentElement;
+            while (curr && curr !== document.body) {
+                const text = normalize(curr.textContent || '');
+                if (text.includes('allow') || text.includes('permission') || text.includes('command') || text.includes('1 yes') || text.includes('1. ')) {
+                    modal = curr;
+                    break;
+                }
+                curr = curr.parentElement;
+            }
+        }
+        if (!modal) modal = submitBtn.parentElement?.parentElement?.parentElement || document.body;
 
         const candidateElements = Array.from(modal.querySelectorAll('*')).filter(el => {
             if (!el.offsetParent && (!el.getBoundingClientRect || el.getBoundingClientRect().width === 0)) return false;
@@ -258,21 +283,19 @@ export function buildSelectAndSubmitScript(optionIndexOrText: number | string): 
             }
         });
 
-        const targetEl = candidateElements[0];
+        const targetEl = candidateElements[0] || null;
         if (targetEl) {
-            const clickEl = targetEl.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"]') || targetEl;
-            ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach(evt => {
-                clickEl.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
-            });
-            if (typeof clickEl.click === 'function') clickEl.click();
+            targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+            targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            if (typeof targetEl.click === 'function') targetEl.click();
         }
 
         setTimeout(() => {
-            ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach(evt => {
-                submitBtn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
-            });
+            submitBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            submitBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+            submitBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             if (typeof submitBtn.click === 'function') submitBtn.click();
-        }, 80);
 
         return { ok: true, optionFound: !!targetEl };
     })()`;
