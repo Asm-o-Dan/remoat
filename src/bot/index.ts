@@ -2797,12 +2797,11 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     logger.setLogLevel(cliLogLevel ?? config.logLevel);
 
     await ensureAntigravityRunning();
-    const bot = createBot();
-
     logger.info('Starting Remoat Telegram bot...');
 
     while (true) {
         try {
+            const bot = createBot();
             await bot.start({
                 drop_pending_updates: true,
                 onStart: async (botInfo) => {
@@ -2810,6 +2809,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     ensureCommandsRegistered(bot.api).catch(() => {});
                 },
             });
+            logger.warn('bot.start() returned gracefully; restarting bot instance in 3s...');
+            await new Promise((r) => setTimeout(r, 3000));
         } catch (err) {
             logger.error('bot.start polling encountered an error, reconnecting in 3s:', err);
             await new Promise((r) => setTimeout(r, 3000));
