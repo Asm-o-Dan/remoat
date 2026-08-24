@@ -1,6 +1,4 @@
-import fs from 'fs';
 import os from 'os';
-import path from 'path';
 import { Bot, Context, InlineKeyboard, InputFile } from 'grammy';
 import Database from 'better-sqlite3';
 
