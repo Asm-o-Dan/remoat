@@ -25,6 +25,7 @@ export interface CdpBridge {
     autoAccept: AutoAcceptService;
     lastActiveWorkspace: string | null;
     lastActiveChannel: TelegramChannel | null;
+    defaultAdminChatId?: string | number | null;
     approvalChannelByWorkspace: Map<string, TelegramChannel>;
     approvalChannelBySession: Map<string, TelegramChannel>;
     botApi: Api | null;
@@ -49,9 +50,7 @@ function buildSessionRouteKey(projectName: string, sessionTitle: string): string
 }
 
 const GET_CURRENT_CHAT_TITLE_SCRIPT = `(() => {
-    const panel = document.querySelector('.antigravity-agent-side-panel');
-    if (!panel) return '';
-    const header = panel.querySelector('div[class*="border-b"]');
+    const header = document.querySelector('header');
     if (!header) return '';
     const titleEl = header.querySelector('div[class*="text-ellipsis"]');
     const title = titleEl ? (titleEl.textContent || '').trim() : '';
@@ -59,7 +58,7 @@ const GET_CURRENT_CHAT_TITLE_SCRIPT = `(() => {
     return title;
 })()`;
 
-export async function getCurrentChatTitle(cdp: CdpService): Promise<string | null> {
+async function getCurrentChatTitle(cdp: CdpService): Promise<string | null> {
     const contexts = cdp.getContexts();
     for (const ctx of contexts) {
         try {
@@ -106,27 +105,45 @@ export function resolveApprovalChannelForCurrentChat(
         const sessionChannel = bridge.approvalChannelBySession.get(key);
         if (sessionChannel) return sessionChannel;
     }
-    return bridge.approvalChannelByWorkspace.get(projectName) ?? null;
+    const wsChannel = bridge.approvalChannelByWorkspace.get(projectName);
+    if (wsChannel) return wsChannel;
+
+    if (bridge.lastActiveChannel) return bridge.lastActiveChannel;
+
+    if (bridge.defaultAdminChatId) {
+        return { chatId: bridge.defaultAdminChatId };
+    }
+
+    return null;
 }
 
 export function buildApprovalCustomId(
-    action: 'approve' | 'always_allow' | 'deny',
+    action: string,
     projectName: string,
     channelId?: string,
 ): string {
-    const prefix = action === 'approve'
-        ? APPROVE_ACTION_PREFIX
-        : action === 'always_allow'
-            ? ALWAYS_ALLOW_ACTION_PREFIX
-            : DENY_ACTION_PREFIX;
+    let prefix = DENY_ACTION_PREFIX;
+    if (action === 'approve') prefix = APPROVE_ACTION_PREFIX;
+    else if (action === 'always_allow') prefix = ALWAYS_ALLOW_ACTION_PREFIX;
+    else if (action.startsWith('approve_opt_')) prefix = action;
+
     if (channelId && channelId.trim().length > 0) {
         return `${prefix}:${projectName}:${channelId}`;
     }
     return `${prefix}:${projectName}`;
 }
 
-export function parseApprovalCustomId(customId: string): { action: 'approve' | 'always_allow' | 'deny'; projectName: string | null; channelId: string | null } | null {
-    for (const [action, prefix] of [['approve', APPROVE_ACTION_PREFIX], ['always_allow', ALWAYS_ALLOW_ACTION_PREFIX], ['deny', DENY_ACTION_PREFIX]] as const) {
+export function parseApprovalCustomId(customId: string): { action: string; projectName: string | null; channelId: string | null } | null {
+    const knownPrefixes = [
+        ['approve', APPROVE_ACTION_PREFIX],
+        ['always_allow', ALWAYS_ALLOW_ACTION_PREFIX],
+        ['deny', DENY_ACTION_PREFIX]
+    ];
+    for (let i = 1; i <= 9; i++) {
+        knownPrefixes.push([`approve_opt_${i}`, `approve_opt_${i}`]);
+    }
+
+    for (const [action, prefix] of knownPrefixes) {
         if (customId === prefix) return { action, projectName: null, channelId: null };
         if (customId.startsWith(`${prefix}:`)) {
             const rest = customId.substring(`${prefix}:`.length);
@@ -201,6 +218,7 @@ export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
         autoAccept,
         lastActiveWorkspace: null,
         lastActiveChannel: null,
+        defaultAdminChatId: null,
         approvalChannelByWorkspace: new Map(),
         approvalChannelBySession: new Map(),
         botApi: null,
@@ -213,7 +231,6 @@ export function getCurrentCdp(bridge: CdpBridge): CdpService | null {
         const cdp = bridge.pool.getConnected(bridge.lastActiveWorkspace);
         if (cdp) return cdp;
     }
-    // Fallback: return any connected workspace
     const activeNames = bridge.pool.getActiveWorkspaceNames();
     if (activeNames.length > 0) {
         return bridge.pool.getConnected(activeNames[0]);
@@ -279,10 +296,42 @@ export function ensureApprovalDetector(
             if (bridge.autoAccept.isEnabled()) {
                 const accepted = await detector.alwaysAllowButton() || await detector.approveButton();
                 const text = accepted
-                    ? `✅ <b>Auto-approved</b>\nAn action was automatically approved.\n<b>Workspace:</b> ${escapeHtml(projectName)}`
+                    ? `✅ <b>Auto-approved</b>\n${info.isQuestionModal ? `Auto-confirmed: ${escapeHtml(info.questionTitle || 'Permission')}` : 'An action was automatically approved.'}\n<b>Workspace:</b> ${escapeHtml(projectName)}`
                     : `⚠️ <b>Auto-approve failed</b>\nManual approval required.\n<b>Workspace:</b> ${escapeHtml(projectName)}`;
                 await sendTelegramMessage(bridge.botApi, targetChannel, text);
                 if (accepted) return;
+            }
+
+            if (info.isQuestionModal) {
+                let text = `🔒 <b>${escapeHtml(info.questionTitle || 'Permission / Selection Required')}</b>\n\n`;
+                if (info.targetText) {
+                    text += `<b>Resource:</b> <code>${escapeHtml(info.targetText)}</code>\n\n`;
+                }
+                if (info.options && info.options.length > 0) {
+                    text += `<b>Available Options:</b>\n`;
+                    info.options.forEach(opt => {
+                        text += `<b>${opt.index}.</b> ${escapeHtml(opt.text)}\n`;
+                    });
+                }
+                text += `\n<b>Workspace:</b> ${escapeHtml(projectName)}`;
+
+                const keyboard = new InlineKeyboard();
+                if (info.options && info.options.length > 0) {
+                    info.options.forEach((opt, idx) => {
+                        const optLabel = opt.text.length > 25 ? opt.text.substring(0, 22) + '...' : opt.text;
+                        keyboard.text(`${opt.index}. ${optLabel}`, buildApprovalCustomId(`approve_opt_${opt.index}`, projectName, targetChannelStr));
+                        if ((idx + 1) % 2 === 0) keyboard.row();
+                    });
+                }
+                keyboard.row().text(`❌ ${info.denyText || 'Skip'}`, buildApprovalCustomId('deny', projectName, targetChannelStr));
+                keyboard.row().text('📸 Скриншот окна', `screenshot_action:${projectName}`);
+
+                const msgId = await sendTelegramMessage(bridge.botApi, targetChannel, text, keyboard);
+                if (msgId) {
+                    lastMessageId = msgId;
+                    lastMessageChatId = targetChannel.chatId;
+                }
+                return;
             }
 
             let text = `🔔 <b>Approval Required</b>\n\n`;
@@ -292,7 +341,6 @@ export function ensureApprovalDetector(
             text += `<b>Deny:</b> ${escapeHtml(info.denyText || '(None)')}\n`;
             text += `<b>Workspace:</b> ${escapeHtml(projectName)}`;
 
-            // Use actual button labels from the UI
             const approveLabel = info.approveText.replace(/[⌃⌥⇧⏎⌘\u2318\u2325\u21B5]+/g, '').trim() || 'Allow';
             const denyLabel = info.denyText || 'Deny';
             const keyboard = new InlineKeyboard()
@@ -358,15 +406,7 @@ export function ensurePlanningDetector(
             }
         },
         onAutoOpened: async (chipText: string) => {
-            logger.info(`[PlanningDetector:${projectName}] Auto-opened: "${chipText}"`);
-
-            const currentChatTitle = await getCurrentChatTitle(cdp);
-            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, projectName, currentChatTitle);
-
-            if (!targetChannel || !bridge.botApi) return;
-
-            const text = `📄 <b>${chipText}</b> opened in <b>${projectName}</b>\n\n<i>Auto-opened — view in Antigravity editor.</i>`;
-            await sendTelegramMessage(bridge.botApi, targetChannel, text);
+            logger.debug(`[PlanningDetector:${projectName}] Auto-opened chip: ${chipText}`);
         },
     });
 
@@ -388,7 +428,7 @@ export function ensureErrorPopupDetector(
 
     const detector = new ErrorPopupDetector({
         cdpService: cdp,
-        pollIntervalMs: 3000,
+        pollIntervalMs: 2000,
         onResolved: () => {
             if (!lastMessageId || !lastMessageChatId || !bridge.botApi) return;
             const msgId = lastMessageId;
@@ -396,7 +436,7 @@ export function ensureErrorPopupDetector(
             lastMessageId = null;
             lastMessageChatId = null;
             bridge.botApi.editMessageReplyMarkup(chatId, msgId, { reply_markup: undefined })
-                .catch(logger.error);
+                .catch((e) => logger.debug('[ErrorPopupDetector] Markup remove failed (expected if already removed):', e));
         },
         onErrorPopup: async (info: ErrorPopupInfo) => {
             logger.debug(`[ErrorPopupDetector:${projectName}] Error popup detected`);
@@ -407,17 +447,27 @@ export function ensureErrorPopupDetector(
             if (!targetChannel || !bridge.botApi) return;
 
             const targetChannelStr = targetChannel.threadId ? String(targetChannel.threadId) : String(targetChannel.chatId);
-            const bodyText = info.body || t('An error occurred in the Antigravity agent.');
 
-            let text = `❌ <b>${escapeHtml(info.title || 'Agent Error')}</b>\n\n`;
-            text += escapeHtml(bodyText.substring(0, 3800)) + `\n\n`;
-            text += `<b>Buttons:</b> ${escapeHtml(info.buttons.join(', ') || '(None)')}\n`;
+            let text = `🚨 <b>${escapeHtml(info.title || 'Error Dialog Detected')}</b>\n\n`;
+            if (info.body) text += `${escapeHtml(info.body)}\n\n`;
             text += `<b>Workspace:</b> ${escapeHtml(projectName)}`;
 
-            const keyboard = new InlineKeyboard()
-                .text('🔇 Dismiss', buildErrorPopupCustomId('dismiss', projectName, targetChannelStr))
-                .text('📋 Copy Debug', buildErrorPopupCustomId('copy_debug', projectName, targetChannelStr))
-                .text('🔄 Retry', buildErrorPopupCustomId('retry', projectName, targetChannelStr));
+            const keyboard = new InlineKeyboard();
+            if (info.buttons && info.buttons.length > 0) {
+                info.buttons.forEach((btnText) => {
+                    const norm = btnText.toLowerCase();
+                    if (norm.includes('retry') || norm.includes('повтор')) {
+                        keyboard.text(`🔄 ${escapeHtml(btnText)}`, buildErrorPopupCustomId('retry', projectName, targetChannelStr));
+                    } else if (norm.includes('debug') || norm.includes('copy')) {
+                        keyboard.text(`📋 ${escapeHtml(btnText)}`, buildErrorPopupCustomId('copy_debug', projectName, targetChannelStr));
+                    } else {
+                        keyboard.text(`✕ ${escapeHtml(btnText)}`, buildErrorPopupCustomId('dismiss', projectName, targetChannelStr));
+                    }
+                });
+            } else {
+                keyboard.text('✕ Dismiss', buildErrorPopupCustomId('dismiss', projectName, targetChannelStr));
+            }
+            keyboard.row().text('📸 Скриншот окна', `screenshot_action:${projectName}`);
 
             const msgId = await sendTelegramMessage(bridge.botApi, targetChannel, text, keyboard);
             if (msgId) {
@@ -436,15 +486,26 @@ export function ensureUserMessageDetector(
     bridge: CdpBridge,
     cdp: CdpService,
     projectName: string,
-    onUserMessage: (info: UserMessageInfo) => void,
 ): void {
     const existing = bridge.pool.getUserMessageDetector(projectName);
     if (existing && existing.isActive()) return;
 
     const detector = new UserMessageDetector({
         cdpService: cdp,
-        pollIntervalMs: 2000,
-        onUserMessage,
+        pollIntervalMs: 1500,
+        onUserMessage: async (info: UserMessageInfo) => {
+            logger.debug(`[UserMessageDetector:${projectName}] User message: ${info.text.substring(0, 30)}`);
+
+            const currentChatTitle = await getCurrentChatTitle(cdp);
+            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, projectName, currentChatTitle);
+
+            if (!targetChannel || !bridge.botApi) return;
+
+            const text = `💬 <b>Antigravity Input (${escapeHtml(projectName)})</b>\n\n` +
+                `<blockquote>${escapeHtml(info.text)}</blockquote>`;
+
+            await sendTelegramMessage(bridge.botApi, targetChannel, text);
+        },
     });
 
     detector.start();

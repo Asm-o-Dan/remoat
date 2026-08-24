@@ -11,6 +11,14 @@ export interface ApprovalInfo {
     denyText: string;
     /** Action description (e.g. "write to file.ts") */
     description: string;
+    /** Whether this dialog is an interactive question / selection / URL permission modal */
+    isQuestionModal?: boolean;
+    /** Title / header of the question modal */
+    questionTitle?: string;
+    /** Target URL or resource */
+    targetText?: string;
+    /** List of selectable options */
+    options?: Array<{ index: number; text: string }>;
 }
 
 export interface ApprovalDetectorOptions {
@@ -25,9 +33,7 @@ export interface ApprovalDetectorOptions {
 }
 
 /**
- * Approval button detection script for the Antigravity UI
- *
- * Detects allow/deny button pairs and extracts descriptions with fallbacks.
+ * Approval button and interactive question detection script for Antigravity UI
  */
 const DETECT_APPROVAL_SCRIPT = `(() => {
     const ALLOW_ONCE_PATTERNS = [
@@ -63,8 +69,77 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
     const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
 
     const allButtons = Array.from(document.querySelectorAll('button'))
-        .filter(btn => btn.offsetParent !== null);
+        .filter(btn => btn.offsetParent !== null || (btn.getBoundingClientRect && btn.getBoundingClientRect().width > 0));
 
+    // =========================================================================
+    // Path A: Interactive Question / URL Permission Modal (Submit + Skip / Options)
+    // =========================================================================
+    const submitBtn = allButtons.find(btn => {
+        const t = normalize(btn.textContent || '');
+        const aria = normalize(btn.getAttribute('aria-label') || '');
+        return /^(submit|confirm|отправить|подтвердить)\b/i.test(t) || /submit/i.test(aria);
+    });
+    if (submitBtn) {
+        const modal = submitBtn.closest('[role="dialog"], .modal, .dialog, div[class*="rounded-"], div[class*="border-"]')
+            || submitBtn.parentElement?.parentElement?.parentElement
+            || document.body;
+
+        const skipBtn = allButtons.find(btn => {
+            const t = normalize(btn.textContent || '');
+            const aria = normalize(btn.getAttribute('aria-label') || '');
+            return /^(skip|cancel|отмена|пропустить)\b/i.test(t) || /skip/i.test(aria);
+        });
+
+        // Look for title / question
+        const headerEl = modal.querySelector('h1, h2, h3, h4, [class*="font-bold"], [class*="font-semibold"], [class*="title"]')
+            || modal.querySelector('div[class*="text-"]');
+        let questionTitle = headerEl ? (headerEl.textContent || '').trim() : '';
+
+        // Look for target / URL / description input
+        const inputOrTarget = modal.querySelector('input, code, [class*="bg-"], [class*="border-"]')
+            || modal.querySelector('p');
+        let targetText = inputOrTarget ? (inputOrTarget.textContent || inputOrTarget.value || '').trim() : '';
+
+        // Extract option items (e.g. 1 Yes, allow this time...)
+        const rawOptions = Array.from(modal.querySelectorAll('*')).filter(el => {
+            if (el.children.length > 4) return false;
+            const t = normalize(el.textContent || '');
+            if (t.length < 2 || t.length > 200) return false;
+            if (/^(submit|skip|cancel|отмена|отправить)\b/i.test(t)) return false;
+            return /^[1-9][\\.\\)\\s]\\s*[a-zа-я]/i.test(t) || /^[1-9]$/.test(t) || /^(yes|no|allow|deny|да|нет)\\b/i.test(t);
+        });
+
+        // Filter unique parent option texts
+        const uniqueOptions = [];
+        const seenTexts = new Set();
+        for (const opt of rawOptions) {
+            const cleanText = (opt.textContent || '').trim();
+            if (cleanText.length > 0 && !seenTexts.has(cleanText) && cleanText !== questionTitle && cleanText !== targetText) {
+                seenTexts.add(cleanText);
+                uniqueOptions.push({
+                    index: uniqueOptions.length + 1,
+                    text: cleanText
+                });
+            }
+        }
+
+        if (uniqueOptions.length > 0 || /allow|permission|url|command|question|выбор|разрешить/i.test(questionTitle)) {
+            return {
+                isQuestionModal: true,
+                questionTitle: questionTitle || 'Permission / Selection Required',
+                targetText: targetText,
+                options: uniqueOptions,
+                approveText: 'Submit',
+                alwaysAllowText: uniqueOptions.some(o => /always|всегда/i.test(o.text)) ? 'Always Allow' : '',
+                denyText: skipBtn ? 'Skip' : 'Deny',
+                description: questionTitle + (targetText ? ': ' + targetText : '')
+            };
+        }
+    }
+
+    // =========================================================================
+    // Path B: Standard Allow / Deny buttons
+    // =========================================================================
     let approveBtn = allButtons.find(btn => {
         const t = normalize(btn.textContent || '');
         if (IGNORE_PATTERNS.some(p => t.includes(p))) return false;
@@ -84,7 +159,6 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
 
     let container = approveBtn.closest('[role="dialog"], .modal, .dialog, .approval-container, .permission-dialog, [class*="modal"], [class*="dialog"]');
     if (!container) {
-        // Walk up ancestors until we find a local container that also contains a deny button (max 5 levels)
         let el = approveBtn.parentElement;
         for (let i = 0; i < 5 && el && el !== document.body && el !== document.documentElement; i++) {
             const btns = Array.from(el.querySelectorAll('button')).filter(b => b.offsetParent !== null && b !== approveBtn);
@@ -96,7 +170,6 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         }
     }
 
-    // STRICT: Never fall back to document.body, as that pairs unrelated page buttons
     if (!container || container === document.body || container === document.documentElement) return null;
 
     const containerButtons = Array.from(container.querySelectorAll('button'))
@@ -119,10 +192,7 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
     const alwaysAllowText = alwaysAllowBtn ? (alwaysAllowBtn.textContent || '').trim() : '';
     const denyText = (denyBtn.textContent || '').trim();
 
-    // Description extraction (multiple fallbacks)
     let description = '';
-
-    // 1. p or .description inside dialog/modal
     const dialog = container;
     if (dialog) {
         const descEl = dialog.querySelector('p, .description, [data-testid="description"]');
@@ -131,7 +201,6 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         }
     }
 
-    // 2. Parent element text (excluding button text)
     if (!description) {
         const parent = approveBtn.parentElement?.parentElement || approveBtn.parentElement;
         if (parent) {
@@ -145,7 +214,6 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         }
     }
 
-    // 3. aria-label fallback
     if (!description) {
         const ariaLabel = approveBtn.getAttribute('aria-label') || '';
         if (ariaLabel) description = ariaLabel;
@@ -153,6 +221,62 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
 
     return { approveText, alwaysAllowText, denyText, description };
 })()`;
+
+/**
+ * Generate script to select an option and submit in an interactive question modal
+ */
+export function buildSelectAndSubmitScript(optionIndexOrText: number | string): string {
+    const targetArg = typeof optionIndexOrText === 'number'
+        ? optionIndexOrText
+        : JSON.stringify(optionIndexOrText);
+
+    return `(() => {
+        const target = ${targetArg};
+        const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+
+        const allButtons = Array.from(document.querySelectorAll('button'))
+            .filter(btn => btn.offsetParent !== null || (btn.getBoundingClientRect && btn.getBoundingClientRect().width > 0));
+        const submitBtn = allButtons.find(btn => {
+            const t = normalize(btn.textContent || '');
+            const aria = normalize(btn.getAttribute('aria-label') || '');
+            return /^(submit|confirm|отправить|подтвердить)\\b/i.test(t) || /submit/i.test(aria);
+        });
+
+        if (!submitBtn) return { ok: false, error: 'Submit button not found' };
+
+        const modal = submitBtn.closest('[role="dialog"], .modal, .dialog, div[class*="rounded-"], div[class*="border-"]')
+            || submitBtn.parentElement?.parentElement?.parentElement
+            || document.body;
+
+        const candidateElements = Array.from(modal.querySelectorAll('*')).filter(el => {
+            if (!el.offsetParent && (!el.getBoundingClientRect || el.getBoundingClientRect().width === 0)) return false;
+            const t = normalize(el.textContent || '');
+            if (typeof target === 'number') {
+                return t.startsWith(target + ' ') || t.startsWith(target + '.') || t.startsWith(target + ')') || t === String(target);
+            } else {
+                return t.includes(normalize(target));
+            }
+        });
+
+        const targetEl = candidateElements[0];
+        if (targetEl) {
+            const clickEl = targetEl.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"]') || targetEl;
+            ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach(evt => {
+                clickEl.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+            });
+            if (typeof clickEl.click === 'function') clickEl.click();
+        }
+
+        setTimeout(() => {
+            ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach(evt => {
+                submitBtn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window }));
+            });
+            if (typeof submitBtn.click === 'function') submitBtn.click();
+        }, 80);
+
+        return { ok: true, optionFound: !!targetEl };
+    })()`;
+}
 
 /**
  * Press the toggle on the right side of Allow Once to expand the Always Allow dropdown.
@@ -229,8 +353,6 @@ const EXPAND_ALWAYS_ALLOW_MENU_SCRIPT = `(() => {
 
 /**
  * Generate a CDP script that clicks a button
- *
- * @param buttonText Text of the button to click
  */
 export function buildClickScript(buttonText: string): string {
     const safeText = JSON.stringify(buttonText);
@@ -256,9 +378,6 @@ export function buildClickScript(buttonText: string): string {
 
 /**
  * Class that detects approval buttons in the Antigravity UI via polling.
- *
- * Notifies detected button info through the onApprovalRequired callback,
- * and performs the actual click operations via approveButton() / denyButton() methods.
  */
 export class ApprovalDetector {
     private cdpService: CdpService;
@@ -304,7 +423,6 @@ export class ApprovalDetector {
 
     /**
      * Return the last detected approval button info.
-     * Returns null if nothing has been detected.
      */
     getLastDetectedInfo(): ApprovalInfo | null {
         return this.lastDetectedInfo;
@@ -322,28 +440,40 @@ export class ApprovalDetector {
     }
 
     /**
-     * Single poll iteration:
-     *   1. Get approval button info from DOM (with contextId)
-     *   2. Notify via callback only on new detection (prevent duplicates)
-     *   3. Reset lastDetectedKey / lastDetectedInfo when buttons disappear
+     * Single poll iteration with multi-context search
      */
-    private async poll(): Promise<void> {
+    async poll(): Promise<void> {
         try {
-            const contextId = this.cdpService.getPrimaryContextId();
-            const callParams: Record<string, unknown> = {
-                expression: DETECT_APPROVAL_SCRIPT,
-                returnByValue: true,
-                awaitPromise: false,
-            };
-            if (contextId !== null) {
-                callParams.contextId = contextId;
+            const rawContexts = typeof this.cdpService.getContexts === 'function' ? this.cdpService.getContexts() : [];
+            const contexts = Array.isArray(rawContexts) ? rawContexts : [];
+            const primaryId = typeof this.cdpService.getPrimaryContextId === 'function' ? this.cdpService.getPrimaryContextId() : null;
+            const targetContexts = primaryId !== null
+                ? [{ id: primaryId }, ...contexts.filter(c => c && c.id !== primaryId)]
+                : (contexts.length > 0 ? contexts : [{ id: null }]);
+
+            let info: ApprovalInfo | null = null;
+            for (const ctx of targetContexts) {
+                try {
+                    const callParams: Record<string, unknown> = {
+                        expression: DETECT_APPROVAL_SCRIPT,
+                        returnByValue: true,
+                        awaitPromise: false,
+                    };
+                    if (ctx.id !== null) {
+                        callParams.contextId = ctx.id;
+                    }
+                    const result = await this.cdpService.call('Runtime.evaluate', callParams);
+                    const val = result?.result?.value;
+                    if (val) {
+                        info = val as ApprovalInfo;
+                        break;
+                    }
+                } catch {
+                    // Try next context
+                }
             }
 
-            const result = await this.cdpService.call('Runtime.evaluate', callParams);
-            const info: ApprovalInfo | null = result?.result?.value ?? null;
-
             if (info) {
-                // Duplicate prevention: use approveText + description combination as key
                 const key = `${info.approveText}::${info.description}`;
                 if (key !== this.lastDetectedKey) {
                     this.lastDetectedKey = key;
@@ -353,7 +483,6 @@ export class ApprovalDetector {
                     });
                 }
             } else {
-                // Reset when buttons disappear (prepare for next approval detection)
                 const wasDetected = this.lastDetectedKey !== null;
                 this.lastDetectedKey = null;
                 this.lastDetectedInfo = null;
@@ -362,7 +491,6 @@ export class ApprovalDetector {
                 }
             }
         } catch (error) {
-            // Ignore CDP errors and continue monitoring
             const message = error instanceof Error ? error.message : String(error);
             if (message.includes('WebSocket is not connected') || message.includes('WebSocket disconnected')) {
                 return;
@@ -372,20 +500,42 @@ export class ApprovalDetector {
     }
 
     /**
+     * Select a specific option in an interactive question modal
+     */
+    async selectOption(optionIndexOrText: number | string): Promise<boolean> {
+        try {
+            const script = buildSelectAndSubmitScript(optionIndexOrText);
+            const result = await this.runEvaluateScript(script);
+            return result?.ok === true;
+        } catch (error) {
+            logger.error('[ApprovalDetector] Error selecting option:', error);
+            return false;
+        }
+    }
+
+    /**
      * Click the approve button with the specified text via CDP.
-     * @param buttonText Text of the button to click (default: detected approveText or "Allow")
-     * @returns true if click succeeded
      */
     async approveButton(buttonText?: string): Promise<boolean> {
+        if (this.lastDetectedInfo?.isQuestionModal) {
+            return this.selectOption(1);
+        }
         const text = buttonText ?? this.lastDetectedInfo?.approveText ?? 'Allow';
         return this.clickButton(text);
     }
 
     /**
      * Select "Allow This Conversation / Always Allow".
-     * If the button is not directly visible, expand the Allow Once dropdown and select it.
      */
     async alwaysAllowButton(): Promise<boolean> {
+        if (this.lastDetectedInfo?.isQuestionModal) {
+            const alwaysOpt = this.lastDetectedInfo.options?.find(o => /always|всегда/i.test(o.text));
+            if (alwaysOpt) {
+                return this.selectOption(alwaysOpt.index);
+            }
+            return this.selectOption(1);
+        }
+
         const directCandidates = [
             this.lastDetectedInfo?.alwaysAllowText,
             'Allow This Conversation',
@@ -416,17 +566,18 @@ export class ApprovalDetector {
 
     /**
      * Click the deny button with the specified text via CDP.
-     * @param buttonText Text of the button to click (default: detected denyText or "Deny")
-     * @returns true if click succeeded
      */
     async denyButton(buttonText?: string): Promise<boolean> {
+        if (this.lastDetectedInfo?.isQuestionModal) {
+            if (await this.clickButton('Skip')) return true;
+            return this.selectOption(this.lastDetectedInfo?.options?.length || 5);
+        }
         const text = buttonText ?? this.lastDetectedInfo?.denyText ?? 'Deny';
         return this.clickButton(text);
     }
 
     /**
-     * Internal click handler (shared implementation for approveButton / denyButton).
-     * Specifies contextId to click in the correct execution context.
+     * Internal click handler
      */
     private async clickButton(buttonText: string): Promise<boolean> {
         try {
@@ -439,20 +590,39 @@ export class ApprovalDetector {
     }
 
     /**
-     * Execute Runtime.evaluate with contextId and return result.value.
+     * Execute Runtime.evaluate across contexts
      */
     private async runEvaluateScript(expression: string): Promise<any> {
-        const contextId = this.cdpService.getPrimaryContextId();
-        const callParams: Record<string, unknown> = {
-            expression,
-            returnByValue: true,
-            awaitPromise: false,
-        };
-        if (contextId !== null) {
-            callParams.contextId = contextId;
+        const rawContexts = typeof this.cdpService.getContexts === 'function' ? this.cdpService.getContexts() : [];
+        const contexts = Array.isArray(rawContexts) ? rawContexts : [];
+        const primaryId = typeof this.cdpService.getPrimaryContextId === 'function' ? this.cdpService.getPrimaryContextId() : null;
+        const targetContexts = primaryId !== null
+            ? [{ id: primaryId }, ...contexts.filter(c => c && c.id !== primaryId)]
+            : (contexts.length > 0 ? contexts : [{ id: null }]);
+
+        for (const ctx of targetContexts) {
+            try {
+                const callParams: Record<string, unknown> = {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise: false,
+                };
+                if (ctx.id !== null) {
+                    callParams.contextId = ctx.id;
+                }
+                const result = await this.cdpService.call('Runtime.evaluate', callParams);
+                const val = result?.result?.value;
+                if (val !== undefined && val !== null) {
+                    if (typeof val === 'object' && val.ok === false && targetContexts.length > 1) {
+                        continue;
+                    }
+                    return val;
+                }
+            } catch {
+                // Try next context
+            }
         }
-        const result = await this.cdpService.call('Runtime.evaluate', callParams);
-        return result?.result?.value;
+        return null;
     }
 
     /** Returns whether monitoring is currently active */

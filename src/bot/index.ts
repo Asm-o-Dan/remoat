@@ -1016,6 +1016,10 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
 
     const bot = new Bot(config.telegramBotToken);
     bridge.botApi = bot.api;
+    bridge.defaultAdminChatId = config.allowedUserIds && config.allowedUserIds.length > 0 ? config.allowedUserIds[0] : null;
+    if (bridge.defaultAdminChatId) {
+        bridge.lastActiveChannel = { chatId: bridge.defaultAdminChatId };
+    }
 
     // Notify user on WebSocket connection lifecycle events
     bridge.pool.on('workspace:disconnected', (projectName: string) => {
@@ -2049,9 +2053,20 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
 
             let success = false;
             let actionLabel = '';
-            if (approvalAction.action === 'approve') { success = await detector.approveButton(); actionLabel = 'Allow'; }
-            else if (approvalAction.action === 'always_allow') { success = await detector.alwaysAllowButton(); actionLabel = 'Allow Chat'; }
-            else { success = await detector.denyButton(); actionLabel = 'Deny'; }
+            if (approvalAction.action.startsWith('approve_opt_')) {
+                const optNum = parseInt(approvalAction.action.replace('approve_opt_', ''), 10);
+                success = await detector.selectOption(optNum);
+                actionLabel = `Option ${optNum}`;
+            } else if (approvalAction.action === 'approve') {
+                success = await detector.approveButton();
+                actionLabel = 'Allow';
+            } else if (approvalAction.action === 'always_allow') {
+                success = await detector.alwaysAllowButton();
+                actionLabel = 'Allow Chat';
+            } else {
+                success = await detector.denyButton();
+                actionLabel = 'Deny';
+            }
 
             if (success) {
                 // Do not remove the keyboard optimistically — onResolved() removes it when
@@ -2688,6 +2703,32 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
         logger.error('Bot error:', err);
     });
 
+    // Auto-connect to active window and start live approval/question detectors immediately on boot
+    setTimeout(async () => {
+        try {
+            const workspaces = workspaceService.scanWorkspaces();
+            if (workspaces.length > 0) {
+                const primaryWorkspace = workspaces[0];
+                const wsPath = workspaceService.getWorkspacePath(primaryWorkspace);
+                const openCdp = await bridge.pool.getOrConnect(wsPath).catch(() => null);
+                if (openCdp) {
+                    const wsName = openCdp.getCurrentWorkspaceName() || primaryWorkspace;
+                    bridge.lastActiveWorkspace = wsName;
+                    if (bridge.defaultAdminChatId) {
+                        const defaultChannel = { chatId: bridge.defaultAdminChatId };
+                        registerApprovalWorkspaceChannel(bridge, wsName, defaultChannel);
+                    }
+                    ensureApprovalDetector(bridge, openCdp, wsName);
+                    ensureErrorPopupDetector(bridge, openCdp, wsName);
+                    ensurePlanningDetector(bridge, openCdp, wsName);
+                    logger.info(`[Startup] Active workspace "${wsName}" auto-connected with live approval detectors.`);
+                }
+            }
+        } catch (e) {
+            logger.debug('[Startup] Auto-connect probe ended:', e);
+        }
+    }, 1000);
+
     return bot;
 };
 
@@ -2723,13 +2764,15 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     { command: 'restart', description: '🔄 Перезапустить бота и загрузить новую сборку' },
                     { command: 'help', description: '❓ Полная справка' },
                 ];
-                await bot.api.setMyCommands(ruCommands);
+                await bot.api.setMyCommands(ruCommands).catch((e) => {
+                    logger.warn('Failed to register command menu (rate limited / non-fatal):', e.message || e);
+                });
                 try {
                     await bot.api.setMyCommands(ruCommands, { language_code: 'ru' });
                 } catch { }
-                logger.info('Telegram command menu registered successfully (RU & default)');
+                logger.info('Telegram command menu registration processed (RU & default)');
             } catch (err) {
-                logger.error('Failed to register command menu:', err);
+                logger.warn('Failed to register command menu:', err);
             }
         },
     });
