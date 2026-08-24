@@ -40,8 +40,8 @@ export class DaemonSupervisor {
 
         this.options = {
             targetScript: options.targetScript || defaultScript,
-            watchDirs: options.watchDirs || (fs.existsSync(defaultDist) ? [defaultDist] : []),
-            debounceMs: options.debounceMs ?? 1200,
+            watchDirs: options.watchDirs || (process.env.REMOAT_WATCH === 'true' && fs.existsSync(defaultDist) ? [defaultDist] : []),
+            debounceMs: options.debounceMs ?? 1500,
             autoRestartOnCrash: options.autoRestartOnCrash ?? true,
             maxCrashesPerMinute: options.maxCrashesPerMinute ?? 10,
             cwd: options.cwd || rootDir,
@@ -95,6 +95,7 @@ export class DaemonSupervisor {
         if (this.child && this.child.pid) {
             await this.killProcessTree(this.child.pid);
             this.child = null;
+            await new Promise((r) => setTimeout(r, 600));
         }
         await this.spawnChild();
     }
@@ -185,10 +186,10 @@ export class DaemonSupervisor {
             try {
                 const watcher = fs.watch(dir, { recursive: true }, (_eventType, filename) => {
                     if (!filename) return;
-                    // Ignore sourcemaps, temp files, lock files
-                    if (filename.endsWith('.map') || filename.endsWith('.tmp') || filename.includes('.lock')) return;
+                    // Only restart on compiled .js files, ignore .d.ts, .map, .tmp, .lock, tsbuildinfo
+                    if (!filename.endsWith('.js') || filename.includes('.lock') || filename.includes('.tmp')) return;
 
-                    logger.debug(`[Supervisor] File change detected: ${filename}`);
+                    logger.info(`[Supervisor] File change detected: ${filename}`);
                     this.scheduleRestart(this.options.debounceMs, `file change: ${filename}`);
                 });
 

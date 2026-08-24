@@ -25,30 +25,40 @@ function sleepSync(ms: number): void {
 }
 
 function killExistingProcess(pid: number): void {
+    const daemonPidFile = path.join(os.homedir(), '.remoat', '.daemon.pid');
+    let daemonPid: number | null = null;
+    try {
+        if (fs.existsSync(daemonPidFile)) {
+            daemonPid = parseInt(fs.readFileSync(daemonPidFile, 'utf-8').trim(), 10);
+        }
+    } catch {}
+
+    // Never kill own parent process or the daemon supervisor
+    if (pid === process.pid || pid === process.ppid || (daemonPid && pid === daemonPid)) {
+        return;
+    }
+
     logger.info(`🔄 Stopping existing Bot process (PID: ${pid})...`);
     try {
-        process.kill(pid, 'SIGTERM');
+        if (process.platform === 'win32') {
+            const { execSync } = require('child_process');
+            execSync(`taskkill /pid ${pid} /F`, { stdio: 'ignore' });
+        } else {
+            process.kill(pid, 'SIGTERM');
+        }
     } catch {
         // Ignore if already terminated
         return;
     }
 
-    // Wait up to 5 seconds for process to exit
-    const deadline = Date.now() + 5000;
+    // Wait up to 3 seconds for process to exit
+    const deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
         if (!isProcessRunning(pid)) {
             logger.info(`✅ Existing process (PID: ${pid}) stopped`);
             return;
         }
         sleepSync(50);
-    }
-
-    // Timeout: force kill with SIGKILL
-    logger.warn(`⚠️  Process did not exit with SIGTERM, force killing (SIGKILL)`);
-    try {
-        process.kill(pid, 'SIGKILL');
-    } catch {
-        // ignore
     }
 }
 
@@ -64,7 +74,7 @@ export function acquireLock(): () => void {
         const content = fs.readFileSync(LOCK_FILE, 'utf-8').trim();
         const existingPid = parseInt(content, 10);
 
-        if (!isNaN(existingPid) && existingPid !== process.pid && isProcessRunning(existingPid)) {
+        if (!isNaN(existingPid) && existingPid !== process.pid && existingPid !== process.ppid && isProcessRunning(existingPid)) {
             // Stop existing process and restart
             killExistingProcess(existingPid);
         } else if (!isNaN(existingPid) && !isProcessRunning(existingPid)) {

@@ -2741,39 +2741,47 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
     logger.info('Starting Remoat Telegram bot...');
 
-    await bot.start({
-        onStart: async (botInfo) => {
-            logger.info(`Bot started as @${botInfo.username} | extractionMode=${config.extractionMode}`);
-            try {
-                const ruCommands = [
-                    { command: 'chats', description: '💬 Список чатов проекта (с кнопками)' },
-                    { command: 'new', description: '➕ Начать новый чат в проекте' },
-                    { command: 'skills', description: '⚡ Каталог скиллов (в 1 клик для копирования)' },
-                    { command: 'models', description: '🧠 Выбрать нейросеть и проверить квоты' },
-                    { command: 'quota', description: '📊 Квоты и лимиты моделей' },
-                    { command: 'mode', description: '⚙️ Режим агента (Default / Full Machine / Turbo)' },
-                    { command: 'sh', description: '💻 Выполнить команду терминала' },
-                    { command: 'newproject', description: '📁 Создать новый проект на диске' },
-                    { command: 'project', description: '📁 Сменить рабочий проект' },
-                    { command: 'summary', description: '📋 Краткая сводка по чату' },
-                    { command: 'autoaccept', description: '🛡️ Авто-одобрение действий' },
-                    { command: 'screenshot', description: '📸 Скриншот окна IDE' },
-                    { command: 'stop', description: '🛑 Прервать текущую генерацию' },
-                    { command: 'status', description: '🔍 Статус подключений и окон' },
-                    { command: 'ping', description: '🏓 Проверить задержку сети' },
-                    { command: 'restart', description: '🔄 Перезапустить бота и загрузить новую сборку' },
-                    { command: 'help', description: '❓ Полная справка' },
-                ];
-                await bot.api.setMyCommands(ruCommands).catch((e) => {
-                    logger.warn('Failed to register command menu (rate limited / non-fatal):', e.message || e);
-                });
-                try {
-                    await bot.api.setMyCommands(ruCommands, { language_code: 'ru' });
-                } catch { }
-                logger.info('Telegram command menu registration processed (RU & default)');
-            } catch (err) {
-                logger.warn('Failed to register command menu:', err);
-            }
-        },
-    });
+    while (true) {
+        try {
+            await bot.start({
+                drop_pending_updates: true,
+                onStart: async (botInfo) => {
+                    logger.info(`Bot started as @${botInfo.username} | extractionMode=${config.extractionMode}`);
+                    try {
+                        const ruCommands = [
+                            { command: 'chats', description: '💬 Список чатов проекта (с кнопками)' },
+                            { command: 'new', description: '➕ Начать новый чат в проекте' },
+                            { command: 'skills', description: '⚡ Каталог скиллов (в 1 клик для копирования)' },
+                            { command: 'models', description: '🧠 Выбрать нейросеть и проверить квоты' },
+                            { command: 'quota', description: '📊 Квоты и лимиты моделей' },
+                            { command: 'mode', description: '⚙️ Режим агента (Default / Full Machine / Turbo)' },
+                            { command: 'sh', description: '💻 Выполнить команду терминала' },
+                            { command: 'newproject', description: '📁 Создать новый проект на диске' },
+                            { command: 'project', description: '📁 Сменить рабочий проект' },
+                            { command: 'summary', description: '📋 Краткая сводка по чату' },
+                            { command: 'autoaccept', description: '🛡️ Авто-одобрение действий' },
+                            { command: 'screenshot', description: '📸 Скриншот окна IDE' },
+                            { command: 'stop', description: '🛑 Прервать текущую генерацию' },
+                            { command: 'status', description: '🔍 Статус подключений и окон' },
+                            { command: 'ping', description: '🏓 Проверить задержку сети' },
+                            { command: 'restart', description: '🔄 Перезапустить бота и загрузить новую сборку' },
+                            { command: 'help', description: '❓ Полная справка' },
+                        ];
+                        await bot.api.setMyCommands(ruCommands).catch((e) => {
+                            logger.warn('Failed to register command menu (rate limited / non-fatal):', e.message || e);
+                        });
+                        try {
+                            await bot.api.setMyCommands(ruCommands, { language_code: 'ru' });
+                        } catch { }
+                        logger.info('Telegram command menu registration processed (RU & default)');
+                    } catch (err) {
+                        logger.warn('Failed to register command menu:', err);
+                    }
+                },
+            });
+        } catch (err) {
+            logger.error('bot.start polling encountered an error, reconnecting in 3s:', err);
+            await new Promise((r) => setTimeout(r, 3000));
+        }
+    }
 };

@@ -32,8 +32,13 @@ export async function startAction(
     console.log(LOGO);
     acquireLock();
 
-    // Non-blocking update check (fire-and-forget)
-    checkForUpdates(version).catch(() => {});
+    process.on('uncaughtException', (err) => {
+        logger.error('💥 Uncaught Exception in Bot process:', err);
+    });
+
+    process.on('unhandledRejection', (reason) => {
+        logger.error('💥 Unhandled Promise Rejection in Bot process:', reason);
+    });
 
     await startBot(cliLevel).catch((err) => {
         logger.error('Failed to start bot:', err);
