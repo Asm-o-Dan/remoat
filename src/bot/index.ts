@@ -343,6 +343,16 @@ async function sendPromptToAntigravity(
     const currentModel = (await cdp.getCurrentModel()) || modelService.getCurrentModel();
     const modelLabel = `${currentModel}`;
 
+    const wsName = cdp.getCurrentWorkspaceName();
+    if (wsName) {
+        bridge.lastActiveWorkspace = wsName;
+        bridge.lastActiveChannel = channel;
+        registerApprovalWorkspaceChannel(bridge, wsName, channel);
+        ensureApprovalDetector(bridge, cdp, wsName);
+        ensureErrorPopupDetector(bridge, cdp, wsName);
+        ensurePlanningDetector(bridge, cdp, wsName);
+    }
+
     // Initialize live progress message (replaces separate "Sending" embed)
     let liveActivityMsgId: number | null = null;
     try {

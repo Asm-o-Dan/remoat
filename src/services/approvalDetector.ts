@@ -77,20 +77,20 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
     const submitBtn = allButtons.find(btn => {
         const t = normalize(btn.textContent || '');
         const aria = normalize(btn.getAttribute('aria-label') || '');
-        return /^(submit|confirm|отправить|подтвердить)\b/i.test(t) || /submit/i.test(aria);
+        return /^(submit|confirm|proceed|continue|apply|отправить|подтвердить|продолжить|применить)\b/i.test(t) || /submit|confirm/i.test(aria);
     });
     if (submitBtn) {
-        let modal = submitBtn.closest('[role="dialog"], [role="alertdialog"], .modal, .dialog');
+        let modal = submitBtn.closest('[role="dialog"], [role="alertdialog"], .modal, .dialog, [class*="modal"], [class*="dialog"]');
         if (!modal) {
             let curr = submitBtn.parentElement;
             while (curr && curr !== document.body) {
                 const text = normalize(curr.textContent || '');
                 const hasHeader = curr.querySelector('h1, h2, h3, h4, [class*="font-semibold"], [class*="font-bold"]');
-                if (hasHeader && (text.includes('allow') || text.includes('permission') || text.includes('command') || text.includes('url') || text.includes('question') || text.includes('разреш'))) {
+                if (hasHeader && (text.includes('allow') || text.includes('permission') || text.includes('command') || text.includes('url') || text.includes('question') || text.includes('разреш') || text.includes('вариант') || text.includes('выберите'))) {
                     modal = curr;
                     break;
                 }
-                if (curr.children.length >= 3 && (text.includes('allow') || text.includes('permission') || text.includes('command') || text.includes('1 yes') || text.includes('1. '))) {
+                if (curr.children.length >= 2 && (text.includes('allow') || text.includes('permission') || text.includes('command') || text.includes('1 yes') || text.includes('1. ') || text.includes('вариант') || text.includes('option'))) {
                     modal = curr;
                     break;
                 }
@@ -109,7 +109,7 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         const headerEl = modal.querySelector('h1, h2, h3, h4, [class*="font-bold"], [class*="font-semibold"], [class*="title"]')
             || Array.from(modal.querySelectorAll('div, p, span')).find(el => {
                 const t = normalize(el.textContent || '');
-                return t.startsWith('allow ') || t.startsWith('do you want to') || t.startsWith('разрешить') || t.endsWith('?');
+                return t.startsWith('allow ') || t.startsWith('do you want to') || t.startsWith('разрешить') || t.startsWith('выберите') || t.endsWith('?');
             });
         let questionTitle = headerEl ? (headerEl.textContent || '').trim() : '';
 
@@ -121,13 +121,19 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
             });
         let targetText = badgeEl ? (badgeEl.textContent || badgeEl.value || '').trim() : '';
 
-        // 3. Extract option items (e.g. 1 Yes, allow this time...)
-        const rawOptions = Array.from(modal.querySelectorAll('div, li, label, [role="radio"], [role="option"], p, span')).filter(el => {
+        // 3. Extract option items (e.g. 1 Yes, allow this time... or Вариант 1...)
+        const rawOptions = Array.from(modal.querySelectorAll('div, li, label, [role="radio"], [role="option"], [role="checkbox"], p, span')).filter(el => {
             if (el.children.length > 3) return false;
             const t = normalize(el.textContent || '');
             if (t.length < 2 || t.length > 300) return false;
-            if (/^(submit|skip|cancel|отмена|отправить)\b/i.test(t)) return false;
-            return /^[1-9][\\.\\)\\s]\\s*[a-zа-я]/i.test(t) || /^[1-9]$/.test(t) || /^(yes|no|allow|deny|да|нет)\\b/i.test(t);
+            if (/^(submit|skip|cancel|отмена|отправить|подтвердить|продолжить|применить)\b/i.test(t)) return false;
+            const isRole = el.getAttribute('role') === 'radio' || el.getAttribute('role') === 'option' || el.getAttribute('role') === 'checkbox';
+            const hasInput = el.tagName === 'LABEL' && !!el.querySelector('input');
+            const matchesPattern = /^[1-9][\.\)\s]\s*[a-zа-я]/i.test(t)
+                || /^[1-9]$/.test(t)
+                || /^(yes|no|allow|deny|да|нет|всегда|always|вариант|пункт|option|choice|\(recommended\))\b/i.test(t)
+                || /\b(вариант|option)\s*[1-9]/i.test(t);
+            return isRole || hasInput || matchesPattern;
         });
 
         // Filter unique parent option texts
@@ -147,7 +153,7 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
             }
         }
 
-        if (uniqueOptions.length > 0 || /allow|permission|url|command|question|выбор|разрешить/i.test(questionTitle)) {
+        if (uniqueOptions.length > 0 || /allow|permission|url|command|question|выбор|разрешить|выберите/i.test(questionTitle)) {
             return {
                 isQuestionModal: true,
                 questionTitle: questionTitle || 'Permission / Selection Required',
