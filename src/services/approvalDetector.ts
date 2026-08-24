@@ -273,9 +273,9 @@ export function buildSelectAndSubmitScript(optionIndexOrText: number | string): 
         }
         if (!modal) modal = submitBtn.parentElement?.parentElement?.parentElement || document.body;
 
-        const candidateElements = Array.from(modal.querySelectorAll('*')).filter(el => {
+        const candidateElements = Array.from(modal.querySelectorAll('div, li, label, [role="radio"], [role="option"], p, span, input')).filter(el => {
             if (!el.offsetParent && (!el.getBoundingClientRect || el.getBoundingClientRect().width === 0)) return false;
-            const t = normalize(el.textContent || '');
+            const t = normalize(el.textContent || el.value || '');
             if (typeof target === 'number') {
                 return t.startsWith(target + ' ') || t.startsWith(target + '.') || t.startsWith(target + ')') || t === String(target);
             } else {
@@ -289,13 +289,16 @@ export function buildSelectAndSubmitScript(optionIndexOrText: number | string): 
             targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
             targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             if (typeof targetEl.click === 'function') targetEl.click();
+            if (targetEl.tagName === 'LABEL') {
+                const inp = targetEl.querySelector('input') || (targetEl.getAttribute('for') ? document.getElementById(targetEl.getAttribute('for')) : null);
+                if (inp && typeof inp.click === 'function') inp.click();
+            }
         }
 
-        setTimeout(() => {
-            submitBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-            submitBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-            submitBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-            if (typeof submitBtn.click === 'function') submitBtn.click();
+        submitBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        submitBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+        submitBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        if (typeof submitBtn.click === 'function') submitBtn.click();
 
         return { ok: true, optionFound: !!targetEl };
     })()`;

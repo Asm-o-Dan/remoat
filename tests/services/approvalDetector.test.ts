@@ -477,4 +477,112 @@ describe('ApprovalDetector - approval button detection and remote execution', ()
 
         expect(onResolved).not.toHaveBeenCalled();
     });
+
+    // ──────────────────────────────────────────────────────
+    // Test 15: Interactive Question / URL Permission Modal Detection
+    // ──────────────────────────────────────────────────────
+    it('detects interactive question modal with multiple options', async () => {
+        const onApprovalRequired = jest.fn();
+        const questionInfo: ApprovalInfo = {
+            isQuestionModal: true,
+            questionTitle: 'Allow fetching URL content?',
+            targetText: 'https://example.com/api',
+            options: [
+                { index: 1, text: '1. Yes, allow once' },
+                { index: 2, text: '2. Always allow this domain' },
+                { index: 3, text: '3. No, deny request' },
+            ],
+            approveText: 'Submit',
+            alwaysAllowText: 'Always Allow',
+            denyText: 'Skip',
+            description: 'Allow fetching URL content?: https://example.com/api',
+        };
+
+        mockCdpService.call.mockResolvedValue({
+            result: { value: questionInfo }
+        });
+
+        detector = new ApprovalDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onApprovalRequired,
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(onApprovalRequired).toHaveBeenCalledTimes(1);
+        expect(onApprovalRequired).toHaveBeenCalledWith(expect.objectContaining({
+            isQuestionModal: true,
+            questionTitle: 'Allow fetching URL content?',
+            targetText: 'https://example.com/api',
+            options: expect.arrayContaining([
+                { index: 1, text: '1. Yes, allow once' },
+                { index: 2, text: '2. Always allow this domain' },
+            ]),
+        }));
+    });
+
+    // ──────────────────────────────────────────────────────
+    // Test 16: selectOption() executes script with option number
+    // ──────────────────────────────────────────────────────
+    it('selectOption() selects option index and submits via CDP', async () => {
+        mockCdpService.call.mockResolvedValue({
+            result: { value: { ok: true, optionFound: true } }
+        });
+
+        detector = new ApprovalDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onApprovalRequired: jest.fn(),
+        });
+
+        const success = await detector.selectOption(2);
+
+        expect(success).toBe(true);
+        expect(mockCdpService.call).toHaveBeenCalledWith(
+            'Runtime.evaluate',
+            expect.objectContaining({
+                expression: expect.stringContaining('const target = 2;'),
+                returnByValue: true,
+                contextId: 42,
+            })
+        );
+    });
+
+    // ──────────────────────────────────────────────────────
+    // Test 17: approveButton() auto-selects option 1 for question modal
+    // ──────────────────────────────────────────────────────
+    it('approveButton() selects option 1 when isQuestionModal is true', async () => {
+        const questionInfo: ApprovalInfo = {
+            isQuestionModal: true,
+            questionTitle: 'Permission Required',
+            options: [{ index: 1, text: 'Allow' }, { index: 2, text: 'Deny' }],
+            approveText: 'Submit',
+            denyText: 'Skip',
+            description: 'Permission Required',
+        };
+
+        mockCdpService.call
+            .mockResolvedValueOnce({ result: { value: questionInfo } })
+            .mockResolvedValueOnce({ result: { value: { ok: true } } });
+
+        detector = new ApprovalDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onApprovalRequired: jest.fn(),
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500);
+
+        const success = await detector.approveButton();
+        expect(success).toBe(true);
+        expect(mockCdpService.call).toHaveBeenLastCalledWith(
+            'Runtime.evaluate',
+            expect.objectContaining({
+                expression: expect.stringContaining('const target = 1;'),
+            })
+        );
+    });
 });
