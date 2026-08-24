@@ -116,9 +116,12 @@ export function acquireLock(): () => void {
         process.exit(0);
     });
     process.on('uncaughtException', (err) => {
-        logger.error('Uncaught exception:', err);
+        console.error('💥 UNCAUGHT EXCEPTION IN BOT:', err);
         releaseLock();
         process.exit(1);
+    });
+    process.on('unhandledRejection', (reason) => {
+        console.error('💥 UNHANDLED REJECTION IN BOT:', reason);
     });
 
     return releaseLock;
