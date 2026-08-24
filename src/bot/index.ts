@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { Bot, Context, InlineKeyboard, InputFile } from 'grammy';
 import Database from 'better-sqlite3';
 
@@ -2744,6 +2747,53 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
     return bot;
 };
 
+async function ensureCommandsRegistered(api: Bot['api']): Promise<void> {
+    const stampFile = path.join(os.homedir(), '.remoat', '.commands.stamp');
+    try {
+        if (fs.existsSync(stampFile)) {
+            const mtime = fs.statSync(stampFile).mtimeMs;
+            if (Date.now() - mtime < 24 * 60 * 60 * 1000) {
+                return;
+            }
+        }
+    } catch {}
+
+    const ruCommands = [
+        { command: 'chats', description: '💬 Список чатов проекта (с кнопками)' },
+        { command: 'new', description: '➕ Начать новый чат в проекте' },
+        { command: 'skills', description: '⚡ Каталог скиллов (в 1 клик для копирования)' },
+        { command: 'models', description: '🧠 Выбрать нейросеть и проверить квоты' },
+        { command: 'quota', description: '📊 Квоты и лимиты моделей' },
+        { command: 'mode', description: '⚙️ Режим агента (Default / Full Machine / Turbo)' },
+        { command: 'sh', description: '💻 Выполнить команду терминала' },
+        { command: 'newproject', description: '📁 Создать новый проект на диске' },
+        { command: 'project', description: '📁 Сменить рабочий проект' },
+        { command: 'summary', description: '📋 Краткая сводка по чату' },
+        { command: 'autoaccept', description: '🛡️ Авто-одобрение действий' },
+        { command: 'screenshot', description: '📸 Скриншот окна IDE' },
+        { command: 'stop', description: '🛑 Прервать текущую генерацию' },
+        { command: 'status', description: '🔍 Статус подключений и окон' },
+        { command: 'ping', description: '🏓 Проверить задержку сети' },
+        { command: 'restart', description: '🔄 Перезапустить бота и загрузить новую сборку' },
+        { command: 'help', description: '❓ Полная справка' },
+    ];
+
+    try {
+        await api.setMyCommands(ruCommands);
+        try {
+            await api.setMyCommands(ruCommands, { language_code: 'ru' });
+        } catch {}
+        try {
+            const dir = path.dirname(stampFile);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(stampFile, String(Date.now()), 'utf-8');
+        } catch {}
+        logger.debug('Telegram command menu updated successfully');
+    } catch (e: any) {
+        logger.debug('Telegram command menu registration skipped (rate-limited / unchanged):', e?.message || e);
+    }
+}
+
 export const startBot = async (cliLogLevel?: LogLevel) => {
     const config = loadConfig();
     logger.setLogLevel(cliLogLevel ?? config.logLevel);
@@ -2759,36 +2809,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 drop_pending_updates: true,
                 onStart: async (botInfo) => {
                     logger.info(`Bot started as @${botInfo.username} | extractionMode=${config.extractionMode}`);
-                    try {
-                        const ruCommands = [
-                            { command: 'chats', description: '💬 Список чатов проекта (с кнопками)' },
-                            { command: 'new', description: '➕ Начать новый чат в проекте' },
-                            { command: 'skills', description: '⚡ Каталог скиллов (в 1 клик для копирования)' },
-                            { command: 'models', description: '🧠 Выбрать нейросеть и проверить квоты' },
-                            { command: 'quota', description: '📊 Квоты и лимиты моделей' },
-                            { command: 'mode', description: '⚙️ Режим агента (Default / Full Machine / Turbo)' },
-                            { command: 'sh', description: '💻 Выполнить команду терминала' },
-                            { command: 'newproject', description: '📁 Создать новый проект на диске' },
-                            { command: 'project', description: '📁 Сменить рабочий проект' },
-                            { command: 'summary', description: '📋 Краткая сводка по чату' },
-                            { command: 'autoaccept', description: '🛡️ Авто-одобрение действий' },
-                            { command: 'screenshot', description: '📸 Скриншот окна IDE' },
-                            { command: 'stop', description: '🛑 Прервать текущую генерацию' },
-                            { command: 'status', description: '🔍 Статус подключений и окон' },
-                            { command: 'ping', description: '🏓 Проверить задержку сети' },
-                            { command: 'restart', description: '🔄 Перезапустить бота и загрузить новую сборку' },
-                            { command: 'help', description: '❓ Полная справка' },
-                        ];
-                        await bot.api.setMyCommands(ruCommands).catch((e) => {
-                            logger.warn('Failed to register command menu (rate limited / non-fatal):', e.message || e);
-                        });
-                        try {
-                            await bot.api.setMyCommands(ruCommands, { language_code: 'ru' });
-                        } catch { }
-                        logger.info('Telegram command menu registration processed (RU & default)');
-                    } catch (err) {
-                        logger.warn('Failed to register command menu:', err);
-                    }
+                    ensureCommandsRegistered(bot.api).catch(() => {});
                 },
             });
         } catch (err) {
