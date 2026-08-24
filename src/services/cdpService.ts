@@ -682,6 +682,64 @@ export class CdpService extends EventEmitter {
     }
 
     /**
+     * Create a new project in Antigravity by clicking Add Project -> Quick Start in the sidebar.
+     * Returns the name of the newly created project.
+     */
+    async createNewProjectQuickStart(): Promise<{ ok: boolean; projectName?: string; error?: string }> {
+        if (!this.isConnectedFlag || !this.ws) {
+            return { ok: false, error: 'Not connected to Antigravity CDP.' };
+        }
+
+        const expression = `(async () => {
+            const addBtn = document.querySelector('[data-testid="sidebar-add-project-button"]') || document.querySelector('button[aria-label="Create New Project"]');
+            if (!addBtn) return { ok: false, error: 'Add Project button not found in sidebar' };
+
+            // Snapshot existing projects before click
+            const beforeBtns = Array.from(document.querySelectorAll('button.group\\\\/headerbtn, [data-testid*="project-header"]'));
+            const beforeProjects = beforeBtns.map(b => (b.textContent || '').trim()).filter(Boolean);
+
+            // 1. Click Add Project button to open popup
+            addBtn.click();
+            await new Promise(r => setTimeout(r, 400));
+
+            // 2. Find and click "Quick Start" option
+            const allElements = Array.from(document.querySelectorAll('button, div, span, a'));
+            const quickStartBtn = allElements.find(el => (el.textContent || '').trim() === 'Quick Start');
+            if (!quickStartBtn) {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                return { ok: false, error: 'Quick Start option not found in project menu' };
+            }
+
+            quickStartBtn.click();
+            await new Promise(r => setTimeout(r, 1000));
+
+            // 3. Find newly added project in sidebar
+            const afterBtns = Array.from(document.querySelectorAll('button.group\\\\/headerbtn, [data-testid*="project-header"]'));
+            const afterProjects = afterBtns.map(b => (b.textContent || '').trim()).filter(Boolean);
+            const newProject = afterProjects.find(p => !beforeProjects.includes(p)) || afterProjects[afterProjects.length - 1];
+
+            return { ok: true, projectName: newProject || 'new-project' };
+        })()`;
+
+        try {
+            const res = await this.call('Runtime.evaluate', {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+            });
+            const val = res?.result?.value;
+            if (val?.ok && val.projectName) {
+                this.currentWorkspaceName = val.projectName;
+                logger.info(`[CdpService] Created new project via Quick Start: ${val.projectName}`);
+                return { ok: true, projectName: val.projectName };
+            }
+            return { ok: false, error: val?.error || 'Failed to create project via Quick Start' };
+        } catch (e: any) {
+            return { ok: false, error: e?.message || String(e) };
+        }
+    }
+
+    /**
      * Connect to each workbench page via CDP to get document.title and detect workspace name.
      * Fallback when /json/list titles are stale or incomplete.
      *

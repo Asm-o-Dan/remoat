@@ -1599,48 +1599,51 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
         });
     });
 
-    // /newproject, /new_project command — create new project folder and connect in Antigravity
+    // /newproject, /new_project command — create new project in Antigravity via Quick Start UI
     bot.command(['newproject', 'new_project'], async (ctx) => {
         const projectName = (ctx.match || '').trim();
-        if (!projectName) {
-            await replyHtml(ctx,
-                `📁 <b>New Project Creation</b>\n\n` +
-                `<b>Использование:</b> <code>/newproject &lt;имя_проекта&gt;</code>\n` +
-                `<b>Пример:</b> <code>/newproject my_new_app</code>`
-            );
-            return;
-        }
+        const ch = getChannel(ctx);
+        const key = channelKey(ch);
 
-        if (!/^[a-zA-Z0-9_\-\.]+$/.test(projectName)) {
-            await ctx.reply('❌ Имя проекта может содержать только буквы, цифры, дефисы и подчеркивания.');
-            return;
-        }
-
-        const projectPath = path.join(config.workspaceBaseDir, projectName);
         try {
-            if (!fs.existsSync(projectPath)) {
-                fs.mkdirSync(projectPath, { recursive: true });
-                const readmePath = path.join(projectPath, 'README.md');
-                fs.writeFileSync(readmePath, `# ${projectName}\n\nCreated via Antigravity Remoat Telegram Remote.\n`);
+            await replyHtml(ctx, `🚀 <b>Creating New Project in Antigravity…</b>\n<i>Нажимаю кнопку создания проекта и Quick Start в интерфейсе…</i>`);
+
+            // 1. If project name provided, create folder and README on disk
+            if (projectName) {
+                const projectPath = path.join(config.workspaceBaseDir, projectName);
+                if (!fs.existsSync(projectPath)) {
+                    fs.mkdirSync(projectPath, { recursive: true });
+                    const readmePath = path.join(projectPath, 'README.md');
+                    fs.writeFileSync(readmePath, `# ${projectName}\n\nCreated via Antigravity Remoat Telegram Remote.\n`);
+                }
             }
 
-            const ch = getChannel(ctx);
-            const key = channelKey(ch);
-            workspaceBindingRepo.upsert({ channelId: key, workspacePath: projectName, guildId: String(ch.chatId) });
+            // 2. Get or connect CDP
+            const cdp = getCurrentCdp(bridge) ?? await bridge.pool.getOrConnect(config.workspaceBaseDir);
+
+            // 3. Click Add Project -> Quick Start in Antigravity interface
+            let realProjectName = projectName || 'new-project';
+            if (typeof (cdp as any).createNewProjectQuickStart === 'function') {
+                const res = await cdp.createNewProjectQuickStart();
+                if (res.ok && res.projectName) {
+                    realProjectName = res.projectName;
+                }
+            }
+
+            const boundName = projectName || realProjectName;
+
+            // 4. Bind channel/topic to this project in SQLite
+            workspaceBindingRepo.upsert({ channelId: key, workspacePath: boundName, guildId: String(ch.chatId) });
+
+            // 5. Start fresh chat session in the newly created project
+            await chatSessionService.startNewChat(cdp);
 
             await replyHtml(ctx,
-                `🚀 <b>Project Created & Bound!</b>\n\n` +
-                `<b>Project:</b> <code>${escapeHtml(projectName)}</code>\n` +
-                `<b>Path:</b> <code>${escapeHtml(projectPath)}</code>\n\n` +
-                `Connecting Antigravity IDE workspace…`
+                `✅ <b>Project Created & Ready!</b>\n\n` +
+                `<b>Project:</b> <code>${escapeHtml(boundName)}</code>\n` +
+                (projectName && realProjectName !== projectName ? `<b>IDE Workspace:</b> <code>${escapeHtml(realProjectName)}</code>\n` : '') +
+                `\nSend your prompt now to start coding in this project!`
             );
-
-            const cdp = await bridge.pool.getOrConnect(projectPath);
-            if (typeof (cdp as any).switchProjectInSidebar === 'function') {
-                await cdp.switchProjectInSidebar(projectName).catch(() => {});
-            }
-            await chatSessionService.startNewChat(cdp);
-            await replyHtml(ctx, `✅ <b>Workspace Ready!</b> Send your prompt now to start coding.`);
         } catch (e: any) {
             logger.error('[newproject] failed:', e);
             await ctx.reply(`❌ Failed to create project: ${e.message}`);

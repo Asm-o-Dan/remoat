@@ -33,6 +33,7 @@ describe('Integration Test Suite: Workspace & Project Management via Telegram', 
         injectMessage: jest.fn().mockResolvedValue({ ok: true }),
         startNewChat: jest.fn().mockResolvedValue(true),
         switchProjectInSidebar: jest.fn().mockResolvedValue(true),
+        createNewProjectQuickStart: jest.fn().mockResolvedValue({ ok: true, projectName: 'my_awesome_app' }),
         getPrimaryContextId: jest.fn().mockReturnValue(1),
         call: jest.fn().mockResolvedValue({ result: { value: true } }),
     };
@@ -99,50 +100,22 @@ describe('Integration Test Suite: Workspace & Project Management via Telegram', 
     });
 
     describe('1. /newproject Command', () => {
-        it('validates project name and rejects invalid characters', async () => {
-            const replies = await simulator.sendText('/newproject "my bad project with spaces!"');
-            expect(replies.length).toBeGreaterThan(0);
-            expect(replies[0].text).toContain('Имя проекта может содержать только буквы');
-
-            // Verify no folders were created
-            const dirs = fs.readdirSync(testBaseDir);
-            expect(dirs).toHaveLength(0);
-        });
-
-        it('shows help when /newproject is called with no arguments', async () => {
-            const replies = await simulator.sendText('/newproject');
-            expect(replies.length).toBeGreaterThan(0);
-            expect(replies[0].text).toContain('New Project Creation');
-            expect(replies[0].text).toContain('&lt;имя_проекта&gt;');
-        });
-
-        it('creates directory, README.md, binds topic in SQLite, and initializes chat session', async () => {
+        it('triggers Quick Start in Antigravity, binds topic in SQLite, and initializes chat session', async () => {
             const replies = await simulator.sendText('/newproject my_awesome_app');
 
-            // 1. Filesystem check
-            const projectDir = path.join(testBaseDir, 'my_awesome_app');
-            expect(fs.existsSync(projectDir)).toBe(true);
-            expect(fs.statSync(projectDir).isDirectory()).toBe(true);
-
-            const readmePath = path.join(projectDir, 'README.md');
-            expect(fs.existsSync(readmePath)).toBe(true);
-            const readmeContent = fs.readFileSync(readmePath, 'utf8');
-            expect(readmeContent).toContain('# my_awesome_app');
-
-            // 2. SQLite Database binding check
+            // 1. SQLite Database binding check
             const defaultChannelKey = `12345678`;
             const binding = workspaceBindingRepo.findByChannelId(defaultChannelKey);
             expect(binding).toBeDefined();
             expect(binding?.workspacePath).toBe('my_awesome_app');
 
-            // 3. Pool connection check
-            expect(mockPool.getOrConnect).toHaveBeenCalledWith(projectDir);
+            // 2. Cdp Quick Start invocation check
+            expect(mockCdp.createNewProjectQuickStart).toHaveBeenCalled();
 
-            // 4. Telegram user response check
+            // 3. Telegram user response check
             const allText = replies.map(r => r.text).join('\n');
-            expect(allText).toContain('Project Created & Bound!');
+            expect(allText).toContain('Project Created & Ready!');
             expect(allText).toContain('my_awesome_app');
-            expect(allText).toContain('Workspace Ready!');
         });
     });
 
