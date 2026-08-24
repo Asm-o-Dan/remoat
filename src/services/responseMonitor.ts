@@ -13,8 +13,8 @@ export const RESPONSE_SELECTORS = {
      *  DOM is normal order: index 0 = oldest, N-1 = newest.
      *  Reverse iteration (N-1→0) visits newest first; strict > keeps it. */
     RESPONSE_TEXT: `(() => {
-        const panel = document.querySelector('.antigravity-agent-side-panel');
-        const scopes = [panel, document].filter(Boolean);
+        const conversationView = document.querySelector('[data-testid="conversation-view"], [data-testid*="conversation-view"], [class*="conversation-view"], .antigravity-agent-side-panel');
+        const scopes = [conversationView, document.querySelector('main, [role="main"]'), document].filter(Boolean);
 
         const selectors = [
             { sel: '.rendered-markdown', score: 10 },
@@ -50,6 +50,8 @@ export const RESPONSE_SELECTORS = {
             if (node.closest('[class*="feedback"], footer')) return true;
             if (node.closest('.notify-user-container')) return true;
             if (node.closest('[role="dialog"]')) return true;
+            if (node.closest('[class*="editor-pane"], [class*="monaco-editor"], [data-testid*="editor"], [data-testid*="artifact"], [data-testid="conversation-list-sidebar"], [data-testid="title-menu-bar"]')) return true;
+            if (node.closest('[class*="file-card"], .file-tree, [class*="code-block-header"]')) return true;
             return false;
         };
 
@@ -273,8 +275,8 @@ export const RESPONSE_SELECTORS = {
     })()`,
     /** Extract process log entries (activity messages + tool output) from DOM */
     PROCESS_LOGS: `(() => {
-        const panel = document.querySelector('.antigravity-agent-side-panel');
-        const scopes = [panel, document].filter(Boolean);
+        const conversationView = document.querySelector('[data-testid="conversation-view"], [data-testid*="conversation-view"], [class*="conversation-view"], .antigravity-agent-side-panel');
+        const scopes = [conversationView, document.querySelector('main, [role="main"]'), document].filter(Boolean);
 
         const selectors = [
             { sel: '.rendered-markdown', score: 10 },
@@ -315,6 +317,8 @@ export const RESPONSE_SELECTORS = {
             if (node.closest('[class*="feedback"], footer')) return true;
             if (node.closest('.notify-user-container')) return true;
             if (node.closest('[role="dialog"]')) return true;
+            if (node.closest('[class*="editor-pane"], [class*="monaco-editor"], [data-testid*="editor"], [data-testid*="artifact"], [data-testid="conversation-list-sidebar"], [data-testid="title-menu-bar"]')) return true;
+            if (node.closest('[class*="file-card"], .file-tree, [class*="code-block-header"]')) return true;
             return false;
         };
 
@@ -345,8 +349,8 @@ export const RESPONSE_SELECTORS = {
      *  that must be replaced with actual baseline counts before evaluation.
      *  Use buildCombinedPollScript() to inject the correct values. */
     COMBINED_POLL_TEMPLATE: `(() => {
-        const panel = document.querySelector('.antigravity-agent-side-panel');
-        const scopes = [panel, document].filter(Boolean);
+        const conversationView = document.querySelector('[data-testid="conversation-view"], [data-testid*="conversation-view"], [class*="conversation-view"], .antigravity-agent-side-panel');
+        const scopes = [conversationView, document.querySelector('main, [role="main"]'), document].filter(Boolean);
 
         // --- Stop button ---
         let isGenerating = false;
@@ -471,6 +475,8 @@ export const RESPONSE_SELECTORS = {
             if (node.closest('[class*="feedback"], footer')) return true;
             if (node.closest('.notify-user-container')) return true;
             if (node.closest('[role="dialog"]')) return true;
+            if (node.closest('[class*="editor-pane"], [class*="monaco-editor"], [data-testid*="editor"], [data-testid*="artifact"], [data-testid="conversation-list-sidebar"], [data-testid="title-menu-bar"]')) return true;
+            if (node.closest('[class*="file-card"], .file-tree, [class*="code-block-header"]')) return true;
             return false;
         };
         const looksLikeToolOutput = (text) => {

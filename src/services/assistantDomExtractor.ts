@@ -151,13 +151,13 @@ export function extractAssistantSegmentsPayloadScript(): string {
     // Uses the same multi-selector strategy as RESPONSE_TEXT to find
     // assistant content nodes in Antigravity's DOM.
     return `(() => {
-    var panel = document.querySelector('.antigravity-agent-side-panel');
-    var rootScope = panel || document;
+    var conversationView = document.querySelector('[data-testid="conversation-view"], [data-testid*="conversation-view"], [class*="conversation-view"], .antigravity-agent-side-panel');
+    var rootScope = conversationView || document.querySelector('main, [role="main"]') || document;
 
     // Scope to the LAST assistant message turn to prevent cross-turn spillover.
     // This is the critical isolation boundary — without it, tool calls, thinking
     // logs, and response text from earlier turns leak into the current extraction.
-    var assistantTurns = rootScope.querySelectorAll('[data-message-author-role="assistant"]');
+    var assistantTurns = rootScope.querySelectorAll('[data-message-author-role="assistant"], [data-message-role="assistant"]');
     var scope = assistantTurns.length > 0
         ? assistantTurns[assistantTurns.length - 1]
         : rootScope;
@@ -211,7 +211,8 @@ export function extractAssistantSegmentsPayloadScript(): string {
         if (node.closest('[class*="feedback"], footer')) return true;
         if (node.closest('.notify-user-container')) return true;
         if (node.closest('[role="dialog"]')) return true;
-        if (node.closest('[class*="artifact"], [class*="file-card"], .file-tree, [class*="code-block-header"]')) return true;
+        if (node.closest('[class*="editor-pane"], [class*="monaco-editor"], [data-testid*="editor"], [data-testid*="artifact"], [data-testid="conversation-list-sidebar"], [data-testid="title-menu-bar"]')) return true;
+        if (node.closest('[class*="file-card"], .file-tree, [class*="code-block-header"]')) return true;
         return false;
     };
 
