@@ -627,8 +627,8 @@ export class PlanningDetector {
                 this.lastClickedChip = null;
                 
                 // Duplicate prevention: use button text + content preview as key (stable across DOM redraws, unique per plan)
-                const uniquePreview = `${info.planTitle}::${info.planSummary.slice(0, 50)}::${info.description.slice(0, 50)}`;
-                const key = `${info.openText}::${info.proceedText}::${uniquePreview}`;
+                const uniquePreview = `${info.planTitle || ''}::${(info.planSummary || '').slice(0, 50)}::${(info.description || '').slice(0, 50)}`;
+                const key = `${info.openText || ''}::${info.proceedText || ''}::${uniquePreview}`;
                 const now = Date.now();
                 const withinCooldown = (now - this.lastNotifiedAt) < PlanningDetector.COOLDOWN_MS;
 
