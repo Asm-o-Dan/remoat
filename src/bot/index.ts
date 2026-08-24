@@ -2799,10 +2799,35 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     await ensureAntigravityRunning();
     logger.info('Starting Remoat Telegram bot...');
 
-    const bot = createBot();
+    const dbPath = process.env.NODE_ENV === 'test' ? ':memory:' : ConfigLoader.getDefaultDbPath();
+    const db = new Database(dbPath);
+    try { db.pragma('journal_mode = WAL'); } catch {}
+
+    const bridge = initCdpBridge(config.autoApproveFileEdits);
+    bridge.botToken = config.telegramBotToken;
+
+    const modeService = new ModeService();
+    const modelService = new ModelService();
+    const templateRepo = new TemplateRepository(db);
+    const workspaceBindingRepo = new WorkspaceBindingRepository(db);
+    const chatSessionRepo = new ChatSessionRepository(db);
+    const workspaceService = new WorkspaceService(config.workspaceBaseDir);
+
+    const botOptions: BotFactoryOptions = {
+        config,
+        db,
+        bridge,
+        modeService,
+        modelService,
+        templateRepo,
+        workspaceBindingRepo,
+        chatSessionRepo,
+        workspaceService,
+    };
 
     while (true) {
         try {
+            const bot = createBot(botOptions);
             await bot.start({
                 drop_pending_updates: true,
                 onStart: async (botInfo) => {
