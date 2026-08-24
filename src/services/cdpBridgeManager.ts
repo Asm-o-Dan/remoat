@@ -229,11 +229,36 @@ export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
 export function getCurrentCdp(bridge: CdpBridge): CdpService | null {
     if (bridge.lastActiveWorkspace) {
         const cdp = bridge.pool.getConnected(bridge.lastActiveWorkspace);
-        if (cdp) return cdp;
+        if (cdp && cdp.isConnected()) return cdp;
     }
     const activeNames = bridge.pool.getActiveWorkspaceNames();
-    if (activeNames.length > 0) {
-        return bridge.pool.getConnected(activeNames[0]);
+    for (const name of activeNames) {
+        const cdp = bridge.pool.getConnected(name);
+        if (cdp && cdp.isConnected()) return cdp;
+    }
+    return null;
+}
+
+export async function getOrConnectActiveCdp(
+    bridge: CdpBridge,
+    workspacePathFallback?: string,
+): Promise<CdpService | null> {
+    const existing = getCurrentCdp(bridge);
+    if (existing && existing.isConnected()) return existing;
+
+    const targetPath = workspacePathFallback || process.cwd();
+    try {
+        const cdp = await bridge.pool.getOrConnect(targetPath);
+        if (cdp && cdp.isConnected()) {
+            const wsName = cdp.getCurrentWorkspaceName() || 'default';
+            bridge.lastActiveWorkspace = wsName;
+            ensureApprovalDetector(bridge, cdp, wsName);
+            ensureErrorPopupDetector(bridge, cdp, wsName);
+            ensurePlanningDetector(bridge, cdp, wsName);
+            return cdp;
+        }
+    } catch (e) {
+        logger.debug('[getOrConnectActiveCdp] Connect failed:', e);
     }
     return null;
 }

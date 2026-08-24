@@ -33,6 +33,7 @@ import {
     ensureErrorPopupDetector,
     ensurePlanningDetector,
     getCurrentCdp,
+    getOrConnectActiveCdp,
     initCdpBridge,
     registerApprovalSessionChannel,
     registerApprovalWorkspaceChannel,
@@ -1273,10 +1274,13 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
 
     // /screenshot command
     bot.command('screenshot', async (ctx) => {
+        const ch = getChannel(ctx);
+        const resolved = await resolveWorkspaceAndCdp(ch);
+        const cdp = (resolved.ok ? resolved.cdp : null) ?? await getOrConnectActiveCdp(bridge);
         await handleScreenshot(
             async (input, caption) => { await ctx.replyWithPhoto(input, { caption }); },
             async (text) => { await ctx.reply(text); },
-            getCurrentCdp(bridge),
+            cdp,
         );
     });
 
@@ -2082,7 +2086,12 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
         // Approval screenshot button
         if (data.startsWith('screenshot_action:')) {
             const projectName = data.substring('screenshot_action:'.length);
-            const cdp = (projectName ? bridge.pool.getConnected(projectName) : null) ?? getCurrentCdp(bridge);
+            let cdp = (projectName ? bridge.pool.getConnected(projectName) : null) ?? getCurrentCdp(bridge);
+            if (!cdp || !cdp.isConnected()) {
+                const ch = getChannel(ctx);
+                const resolved = await resolveWorkspaceAndCdp(ch);
+                cdp = (resolved.ok ? resolved.cdp : null) ?? await getOrConnectActiveCdp(bridge);
+            }
             await ctx.answerCallbackQuery({ text: '📸 Taking screenshot...' });
             await handleScreenshot(
                 async (input, caption) => { await ctx.replyWithPhoto(input, { caption }); },
@@ -2417,10 +2426,13 @@ export const createBot = (options: BotFactoryOptions = {}): Bot<Context> => {
             }
 
             if (parsed.commandName === 'screenshot') {
+                const ch = getChannel(ctx);
+                const resolved = await resolveWorkspaceAndCdp(ch);
+                const cdp = (resolved.ok ? resolved.cdp : null) ?? await getOrConnectActiveCdp(bridge);
                 await handleScreenshot(
                     async (input, caption) => { await ctx.replyWithPhoto(input, { caption }); },
                     async (text) => { await ctx.reply(text); },
-                    getCurrentCdp(bridge),
+                    cdp,
                 );
                 return;
             }
